@@ -14,6 +14,15 @@ Recipe App is your personal cooking companion that makes meal planning effortles
 - **Meal Planning**: Receive customized meal plans tailored to specific dietary requirements (vegan, keto, gluten-free, etc.)
 - **Favorites**: Save your favorite recipes for quick access
 
+- ## Users will be able to:
+
+- Import recipes from any social media platform 
+- Add their own recipes 
+- Get random recipes 
+- Search recipes by (name, ingredients, etc)
+- Have a personalised home feed
+- Add recipes to favorite 
+
 ### Home Screen
 - Personalized greeting with user avatar
 - Quick search bar for instant recipe lookup
@@ -50,10 +59,10 @@ Each recipe includes:
 
 <div align="center">
   <img src="screenshots/Home_Screen.png" alt="Home Screen" width="250"/>
-  <img src="screenshots/Recipe_details_Screen.png" alt="Recipe Detail" width="250"/>
-  <img src="screenshots/Profile_Screen.png" alt="Profile Screen" width="250"/>
+  <img src="screenshots/Recipe_Details_Screen.png" alt="Recipe Detail" width="250"/>
   <img src="screenshots/Recipe_Instruction.png" alt="Profile Screen" width="250"/>
   <img src="screenshots/Search_Recipe_Screen.png" alt="Profile Screen" width="250"/>
+  <img src="screenshots/Profile_Screen.png" alt="Profile Screen" width="250"/>
   
   
 </div>
