@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "195831940638",
+    "project_id": "meal-palette",
+    "storage_bucket": "meal-palette.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:195831940638:android:81bbea2d51d6f4fb7a500f",
+        "android_client_info": {
+          "package_name": "com.mapharitechnologies"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDdpepedzx-DmYx5WnQbiSJTP6MmkT893s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
