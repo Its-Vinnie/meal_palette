@@ -1,17 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:meal_palette/model/recipe_model.dart';
 
 class FirestoreService {
   //* Reference for firestore
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   //* Method to save recipes from API to firestore
-  Future<void> saveRecipe(Map<String, dynamic> recipeData) async {
+  Future<void> saveRecipe(List<Recipe> recipeData) async {
     //* getting reference of the collection in firestore
     try {
       CollectionReference recipes = _db.collection('recipes');
 
       //* we are using recipe id as the name of the document of each recipe
-      String recipeId = recipeData['id'].toString();
+      String recipeId = recipeData[0].toString();
 
       //* saving the recipes in the recipes collection
       await recipes.doc(recipeId).set(recipeData);

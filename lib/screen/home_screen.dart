@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:meal_palette/database/firestore_service.dart';
+import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/screen/recipe_details_screen.dart';
 import 'package:meal_palette/service/spoonacular_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
@@ -36,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final trending = await SpoonacularService.getRandomRecipes(number: 6);
       setState(() {
         _trendingRecipes = trending;
-        _firestoreService.saveRecipe(trending as Map<String, dynamic>);
+        _firestoreService.saveRecipe(trending);
         _trendingFavorites = List.filled(trending.length, false);
         print(_trendingFavorites);
         _isLoadingTrending = false;

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:meal_palette/database/firestore_service.dart';
+import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/screen/recipe_details_screen.dart';
 import 'package:meal_palette/service/spoonacular_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
-
 
 class RecipeSearchScreen extends StatefulWidget {
   const RecipeSearchScreen({super.key});
@@ -15,6 +16,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   final _searchController = TextEditingController();
   List<Recipe> _recipes = [];
   bool _isLoading = false;
+  FirestoreService firestoreService = FirestoreService();
   String? _error;
 
   Future<void> _searchRecipes() async {
@@ -33,6 +35,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
       setState(() {
         _recipes = recipes;
+        firestoreService.saveRecipe(recipes);
         _isLoading = false;
       });
     } catch (e) {
@@ -47,9 +50,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text('Search Recipes'),
-      ),
+      appBar: AppBar(title: Text('Search Recipes')),
       body: Padding(
         padding: EdgeInsets.all(AppSpacing.lg),
         child: Column(
