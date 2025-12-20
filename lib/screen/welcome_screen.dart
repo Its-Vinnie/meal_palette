@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:meal_palette/screen/main_app_screen.dart';
+import 'package:meal_palette/screen/register_screen.dart';
 // import 'package:meal_palette/screen/register_screen.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/slider_button.dart';
@@ -42,7 +42,7 @@ class WelcomeScreen extends StatelessWidget {
                   onSlideComplete: () {
                     Navigator.pushReplacement(
                       context,
-                      MaterialPageRoute(builder: (context) => MainAppScreen()),
+                      MaterialPageRoute(builder: (context) => RegisterScreen()),
                     );
                   },
 

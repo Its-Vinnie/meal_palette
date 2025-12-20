@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:meal_palette/screen/home_screen.dart';
+import 'package:meal_palette/screen/main_app_screen.dart';
 import 'package:meal_palette/screen/register_screen.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/custom_text_field.dart';
@@ -103,7 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: () {
                         Navigator.pushReplacement(
                           context,
-                          MaterialPageRoute(builder: (context) => HomeScreen()),
+                          MaterialPageRoute(builder: (context) => MainAppScreen()),
                         );
                       },
                       style: ElevatedButton.styleFrom(

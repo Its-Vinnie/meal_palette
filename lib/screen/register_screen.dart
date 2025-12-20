@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:meal_palette/screen/login_screen.dart';
+import 'package:meal_palette/service/auth_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/custom_text_field.dart';
 
@@ -19,6 +20,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  bool isLoading = true;
+
+  void register() {
+    authService.value.createAccount(
+      email: _emailController.text,
+      password: _passwordController.text,
+    );
+  }
 
   @override
   void dispose() {
@@ -42,7 +51,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-        
                   // Title
                   Text("Create Account", style: AppTextStyles.pageHeadline),
 
@@ -169,7 +177,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       onPressed: () {
                         if (_formKey.currentState!.validate()) {
                           // Process registration
-                          print("Registration successful!");
+                          register();
+                          // print("Registration successful!");
                           // Navigate to home or show success
                         }
                       },

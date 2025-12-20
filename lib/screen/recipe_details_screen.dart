@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:meal_palette/database/firestore_service.dart';
+import 'package:meal_palette/model/detailed_recipe_model.dart';
+import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/service/spoonacular_service.dart';
+import 'package:meal_palette/state/favorites_state.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 
 class RecipeDetailScreen extends StatefulWidget {
@@ -12,9 +16,14 @@ class RecipeDetailScreen extends StatefulWidget {
 }
 
 class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
+  //* Recipe data
   RecipeDetail? _recipe;
   bool _isLoading = true;
   String? _error;
+
+  //* Services and state
+  final FirestoreService _firestoreService = FirestoreService();
+  final FavoritesState _favoritesState = FavoritesState();
 
   @override
   void initState() {
@@ -22,23 +31,76 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     _loadRecipe();
   }
 
+  /// Loads recipe details from API and saves to Firestore
   Future<void> _loadRecipe() async {
     try {
-      final recipe = await SpoonacularService.getRecipeDetails(widget.recipeId);
+      //* Fetch recipe details from API
+      final recipe =
+          await SpoonacularService.getRecipeDetails(widget.recipeId);
+
+      //* Save detailed recipe to Firestore using toMap()
+      await _firestoreService.saveDetailedRecipe(recipe);
+
+      //* Track that user viewed this recipe
+      await _firestoreService.trackRecipeView(
+        _favoritesState.currentUserId,
+        recipe.id,
+      );
+
+      //* Update UI
       setState(() {
         _recipe = recipe;
         _isLoading = false;
       });
+
+      print("✅ Recipe loaded and saved: ${recipe.title}");
     } catch (e) {
       setState(() {
         _error = e.toString();
         _isLoading = false;
       });
+      print("❌ Error loading recipe: $e");
+    }
+  }
+
+  /// Handles favorite button press
+  Future<void> _handleFavoritePressed() async {
+    if (_recipe == null) return;
+
+    //* Convert RecipeDetail to Recipe for favorites
+    final basicRecipe = Recipe(
+      id: _recipe!.id,
+      title: _recipe!.title,
+      image: _recipe!.image,
+      readyInMinutes: _recipe!.readyInMinutes,
+      servings: _recipe!.servings,
+      summary: _recipe!.summary,
+    );
+
+    //* Toggle favorite status
+    final isNowFavorite = await _favoritesState.toggleFavorite(basicRecipe);
+
+    //* Show feedback
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isNowFavorite
+                ? '❤️ Added to favorites'
+                : '💔 Removed from favorites',
+          ),
+          duration: Duration(seconds: 2),
+          backgroundColor: isNowFavorite
+              ? AppColors.success
+              : AppColors.textSecondary,
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    //* Loading state
     if (_isLoading) {
       return Scaffold(
         backgroundColor: AppColors.background,
@@ -48,46 +110,178 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       );
     }
 
+    //* Error state
     if (_error != null || _recipe == null) {
       return Scaffold(
         backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
         body: Center(
-          child: Text('Error loading recipe', style: AppTextStyles.bodyLarge),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline,
+                size: 64,
+                color: AppColors.favorite,
+              ),
+              SizedBox(height: AppSpacing.lg),
+              Text(
+                'Error loading recipe',
+                style: AppTextStyles.bodyLarge,
+              ),
+              SizedBox(height: AppSpacing.md),
+              Text(
+                _error ?? 'Unknown error',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.textTertiary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: AppSpacing.xl),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _isLoading = true;
+                    _error = null;
+                  });
+                  _loadRecipe();
+                },
+                child: Text('Retry'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
+    //* Success state - show recipe details
     return Scaffold(
       backgroundColor: AppColors.background,
       body: CustomScrollView(
         slivers: [
-          // App Bar with Image
+          //* App Bar with Image and Favorite Button
           SliverAppBar(
             expandedHeight: 300,
             pinned: true,
             backgroundColor: AppColors.background,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
-                  _recipe!.title,
-                  style: AppTextStyles.recipeTitle.copyWith(fontSize: 18),
+            leading: Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface.withValues(alpha: 0.9),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: Icon(Icons.arrow_back),
+                  onPressed: () => Navigator.pop(context),
                 ),
               ),
-              background: _recipe!.image != null
-                  ? Image.network(_recipe!.image!, fit: BoxFit.cover)
-                  : Container(color: AppColors.surface),
+            ),
+            actions: [
+              //* Favorite button with state management
+              Padding(
+                padding: EdgeInsets.all(8.0),
+                child: AnimatedBuilder(
+                  animation: _favoritesState,
+                  builder: (context, child) {
+                    final isFavorite =
+                        _favoritesState.isFavorite(_recipe!.id);
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surface.withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: Icon(
+                          isFavorite ? Icons.favorite : Icons.favorite_border,
+                          color: isFavorite
+                              ? AppColors.favorite
+                              : AppColors.textPrimary,
+                        ),
+                        onPressed: _handleFavoritePressed,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+            flexibleSpace: FlexibleSpaceBar(
+              title: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.overlayDark.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _recipe!.title,
+                  style: AppTextStyles.recipeTitle.copyWith(fontSize: 16),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              background: Stack(
+                fit: StackFit.expand,
+                children: [
+                  //* Recipe image
+                  _recipe!.image != null
+                      ? Image.network(
+                          _recipe!.image!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: AppColors.surface,
+                              child: Icon(
+                                Icons.restaurant_menu,
+                                size: 64,
+                                color: AppColors.textTertiary,
+                              ),
+                            );
+                          },
+                        )
+                      : Container(
+                          color: AppColors.surface,
+                          child: Icon(
+                            Icons.restaurant_menu,
+                            size: 64,
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
+                  //* Gradient overlay
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.7),
+                        ],
+                        stops: [0.5, 1.0],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 
-          // Content
+          //* Content
           SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.all(AppSpacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Info Row
+                  //* Info Row (time, servings)
                   Row(
                     children: [
                       _buildInfoChip(
@@ -104,20 +298,25 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
                   SizedBox(height: AppSpacing.xl),
 
-                  // Dietary Tags
-                  Wrap(
-                    spacing: AppSpacing.sm,
-                    children: [
-                      if (_recipe!.vegetarian) _buildTag('Vegetarian'),
-                      if (_recipe!.vegan) _buildTag('Vegan'),
-                      if (_recipe!.glutenFree) _buildTag('Gluten Free'),
-                      if (_recipe!.dairyFree) _buildTag('Dairy Free'),
-                    ],
-                  ),
+                  //* Dietary Tags
+                  if (_recipe!.vegetarian ||
+                      _recipe!.vegan ||
+                      _recipe!.glutenFree ||
+                      _recipe!.dairyFree) ...[
+                    Wrap(
+                      spacing: AppSpacing.sm,
+                      runSpacing: AppSpacing.sm,
+                      children: [
+                        if (_recipe!.vegetarian) _buildTag('🥬 Vegetarian'),
+                        if (_recipe!.vegan) _buildTag('🌱 Vegan'),
+                        if (_recipe!.glutenFree) _buildTag('🌾 Gluten Free'),
+                        if (_recipe!.dairyFree) _buildTag('🥛 Dairy Free'),
+                      ],
+                    ),
+                    SizedBox(height: AppSpacing.xxl),
+                  ],
 
-                  SizedBox(height: AppSpacing.xxl),
-
-                  // Ingredients Section
+                  //* Ingredients Section
                   Text('Ingredients', style: AppTextStyles.recipeTitle),
                   SizedBox(height: AppSpacing.lg),
 
@@ -125,13 +324,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     (ingredient) => Padding(
                       padding: EdgeInsets.only(bottom: AppSpacing.md),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.circle,
-                            size: 8,
-                            color: AppColors.primaryAccent,
+                          Container(
+                            width: 8,
+                            height: 8,
+                            margin: EdgeInsets.only(top: 6, right: 12),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryAccent,
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                          SizedBox(width: AppSpacing.md),
                           Expanded(
                             child: Text(
                               ingredient.original,
@@ -145,49 +348,79 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
                   SizedBox(height: AppSpacing.xxl),
 
-                  // Instructions Section
+                  //* Instructions Section
                   Text('Instructions', style: AppTextStyles.recipeTitle),
                   SizedBox(height: AppSpacing.lg),
 
-                  ..._recipe!.instructions.asMap().entries.map((entry) {
-                    final instruction = entry.value;
-                    return Container(
-                      margin: EdgeInsets.only(bottom: AppSpacing.lg),
+                  if (_recipe!.instructions.isEmpty)
+                    Container(
                       padding: EdgeInsets.all(AppSpacing.lg),
                       decoration: BoxDecoration(
                         color: AppColors.surface,
                         borderRadius: BorderRadius.circular(AppRadius.md),
                       ),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryAccent,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Center(
-                              child: Text(
-                                '${instruction.number}',
-                                style: AppTextStyles.labelLarge.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                          Icon(
+                            Icons.info_outline,
+                            color: AppColors.textTertiary,
                           ),
-                          SizedBox(width: AppSpacing.lg),
+                          SizedBox(width: AppSpacing.md),
                           Expanded(
                             child: Text(
-                              instruction.step,
-                              style: AppTextStyles.bodyMedium,
+                              'No detailed instructions available for this recipe.',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                color: AppColors.textTertiary,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    );
-                  }),
+                    )
+                  else
+                    ..._recipe!.instructions.map((instruction) {
+                      return Container(
+                        margin: EdgeInsets.only(bottom: AppSpacing.lg),
+                        padding: EdgeInsets.all(AppSpacing.lg),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            //* Step number
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryAccent,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '${instruction.number}',
+                                  style: AppTextStyles.labelLarge.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: AppSpacing.lg),
+                            //* Step description
+                            Expanded(
+                              child: Text(
+                                instruction.step,
+                                style: AppTextStyles.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+
+                  SizedBox(height: AppSpacing.xxl),
                 ],
               ),
             ),
@@ -197,6 +430,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
+  /// Builds info chip widget (time, servings)
   Widget _buildInfoChip(IconData icon, String label) {
     return Container(
       padding: EdgeInsets.symmetric(
@@ -218,6 +452,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
+  /// Builds dietary tag widget
   Widget _buildTag(String label) {
     return Container(
       padding: EdgeInsets.symmetric(
@@ -225,7 +460,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         vertical: AppSpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: AppColors.success.withOpacity(0.2),
+        color: AppColors.success.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: AppColors.success),
       ),
