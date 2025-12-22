@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:meal_palette/database/firestore_service.dart';
 import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/screen/recipe_details_screen.dart';
-import 'package:meal_palette/screen/profile_screen.dart';
 import 'package:meal_palette/service/spoonacular_service.dart';
-import 'package:meal_palette/service/user_profile_service.dart';
 import 'package:meal_palette/state/favorites_state.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/recipe_cards.dart';
@@ -19,109 +17,144 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   //* State variables for recipes
   List<Recipe> _trendingRecipes = [];
-  List<Recipe> _popularRecipes = [];
+  List<Recipe> _categoryRecipes = [];
   bool _isLoadingTrending = true;
-  bool _isLoadingPopular = true;
+  bool _isLoadingCategory = false;
 
+  //* Category state
+  String _selectedCategory = 'Western';
+  
   //* Favorites state management
   final FavoritesState _favoritesState = FavoritesState();
-
-  //* User profile service
-  final UserProfileService _userProfileService = UserProfileService();
-
-  //* User name state
-  String _userName = 'User';
 
   @override
   void initState() {
     super.initState();
-    _loadUserProfile();
     _loadRecipes();
-
-    //* Load favorites after a frame to avoid setState during build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _favoritesState.loadFavorites();
-    });
+    _favoritesState.loadFavorites();
   }
 
-  /// Load user profile to get the name
-  Future<void> _loadUserProfile() async {
-    try {
-      final profile = await _userProfileService.getCurrentUserProfile();
-      if (profile != null && mounted) {
-        setState(() {
-          _userName = profile.displayName.split(' ')[0]; // Get first name
-        });
-      }
-    } catch (e) {
-      print('Error loading user profile: $e');
-    }
-  }
-
-  /// Loads recipes from API and saves them to Firestore
+  /// Loads recipes from API with Firestore fallback
   Future<void> _loadRecipes() async {
     final firestoreService = FirestoreService();
 
     //* Load trending recipes (horizontal scroll)
     try {
+      //* Try API first
       final trending = await SpoonacularService.getRandomRecipes(number: 6);
-
+      
       //* Save trending recipes to Firestore in background
       _saveRecipesToFirestore(trending, firestoreService);
-
-      if (mounted) {
+      
+      setState(() {
+        _trendingRecipes = trending;
+        _isLoadingTrending = false;
+      });
+      
+      print('✅ Loaded trending recipes from API');
+    } catch (e) {
+      print('⚠️ API limit reached, loading from Firestore: $e');
+      
+      //* Fallback to Firestore
+      try {
+        final cachedRecipes = await firestoreService.getRecipesPaginated(limit: 6);
+        
         setState(() {
-          _trendingRecipes = trending;
+          _trendingRecipes = cachedRecipes;
           _isLoadingTrending = false;
         });
-      }
-    } catch (e) {
-      print('❌ Error loading trending recipes: $e');
-      if (mounted) {
+        
+        print('✅ Loaded ${cachedRecipes.length} recipes from Firestore cache');
+      } catch (firestoreError) {
+        print('❌ Error loading from Firestore: $firestoreError');
         setState(() {
           _isLoadingTrending = false;
         });
       }
     }
 
-    //* Load popular recipes (vertical cards)
+    //* Load initial category recipes
+    _loadCategoryRecipes(_selectedCategory);
+  }
+
+  /// Loads recipes for a specific category with Firestore fallback
+  Future<void> _loadCategoryRecipes(String category) async {
+    setState(() {
+      _isLoadingCategory = true;
+      _selectedCategory = category;
+    });
+
+    final firestoreService = FirestoreService();
+
     try {
-      final popular = await SpoonacularService.searchRecipes(
-        query: 'cake',
+      //* Try API first
+      final searchQuery = _getCategorySearchQuery(category);
+      
+      final recipes = await SpoonacularService.searchRecipes(
+        query: searchQuery,
         number: 5,
       );
-
-      //* Save popular recipes to Firestore in background
-      _saveRecipesToFirestore(popular, firestoreService);
-
-      if (mounted) {
-        setState(() {
-          _popularRecipes = popular;
-          _isLoadingPopular = false;
-        });
-      }
+      
+      //* Save category recipes to Firestore in background
+      _saveRecipesToFirestore(recipes, firestoreService);
+      
+      setState(() {
+        _categoryRecipes = recipes;
+        _isLoadingCategory = false;
+      });
+      
+      print('✅ Loaded ${recipes.length} recipes for category: $category from API');
     } catch (e) {
-      print('❌ Error loading popular recipes: $e');
-      if (mounted) {
+      print('⚠️ API limit reached for category, loading from Firestore: $e');
+      
+      //* Fallback to Firestore - use category-based search
+      try {
+        final cachedRecipes = await firestoreService.getRecipesByCategory(
+          category,
+          limit: 5,
+        );
+        
         setState(() {
-          _isLoadingPopular = false;
+          _categoryRecipes = cachedRecipes;
+          _isLoadingCategory = false;
+        });
+        
+        print('✅ Loaded ${cachedRecipes.length} recipes from Firestore for: $category');
+      } catch (firestoreError) {
+        print('❌ Error loading from Firestore: $firestoreError');
+        setState(() {
+          _isLoadingCategory = false;
         });
       }
     }
   }
 
+  /// Maps category name to appropriate search query
+  String _getCategorySearchQuery(String category) {
+    switch (category.toLowerCase()) {
+      case 'western':
+        return 'american burger steak';
+      case 'bread':
+        return 'bread baked goods';
+      case 'soup':
+        return 'soup';
+      case 'dessert':
+        return 'dessert cake';
+      case 'coffee':
+        return 'coffee drink beverage';
+      default:
+        return category;
+    }
+  }
+
   /// Saves recipes to Firestore in the background
-  /// Doesn't block the UI or throw errors
   Future<void> _saveRecipesToFirestore(
-    List<Recipe> recipes,
-    FirestoreService service,
-  ) async {
+      List<Recipe> recipes, FirestoreService service) async {
     try {
       await service.saveRecipesBatch(recipes);
       print('💾 Saved ${recipes.length} recipes to Firestore database');
     } catch (e) {
       print('⚠️ Failed to save recipes to Firestore: $e');
-      // Silent failure - don't interrupt user experience
     }
   }
 
@@ -129,7 +162,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleFavoritePressed(Recipe recipe) async {
     final isNowFavorite = await _favoritesState.toggleFavorite(recipe);
 
-    //* Show feedback
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -139,9 +171,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 : '💔 Removed from favorites',
           ),
           duration: Duration(seconds: 1),
-          backgroundColor: isNowFavorite
-              ? AppColors.success
-              : AppColors.textSecondary,
+          backgroundColor:
+              isNowFavorite ? AppColors.success : AppColors.textSecondary,
         ),
       );
     }
@@ -157,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
           onRefresh: () async {
             setState(() {
               _isLoadingTrending = true;
-              _isLoadingPopular = true;
+              _isLoadingCategory = true;
             });
             await _loadRecipes();
           },
@@ -174,41 +205,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Row(
                         children: [
-                          //* Profile Avatar - Navigate to Profile Screen
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ProfileScreen(),
-                                ),
-                              );
-                            },
-                            child: Container(
-                              decoration: AppDecorations.iconButtonDecoration,
-                              child: IconButton(
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ProfileScreen(),
-                                    ),
-                                  );
-                                },
-                                icon: Icon(
-                                  Icons.person,
-                                  color: AppColors.textPrimary,
-                                ),
+                          //* Profile Avatar
+                          Container(
+                            decoration: AppDecorations.iconButtonDecoration,
+                            child: IconButton(
+                              onPressed: () {},
+                              icon: Icon(
+                                Icons.person,
+                                color: AppColors.textPrimary,
                               ),
                             ),
                           ),
                           SizedBox(width: AppSpacing.md),
-                          //* Dynamic Greeting with User's Name
+                          //* Greeting
                           RichText(
                             text: TextSpan(
                               children: [
                                 TextSpan(
-                                  text: "Hi $_userName ",
+                                  text: "Hi Vincent ",
                                   style: AppTextStyles.bodyLarge,
                                 ),
                                 TextSpan(text: "👋🏼"),
@@ -275,23 +289,48 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     onSubmitted: (value) {
-                      //* TODO: Navigate to search screen with query
                       print('Search: $value');
                     },
                   ),
 
                   SizedBox(height: AppSpacing.xl),
 
-                  //* Category Icons
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _buildCategoryIcon(Icons.lunch_dining, "Western", true),
-                      _buildCategoryIcon(Icons.bakery_dining, "Bread", false),
-                      _buildCategoryIcon(Icons.soup_kitchen, "Soup", false),
-                      _buildCategoryIcon(Icons.cake, "Dessert", false),
-                      _buildCategoryIcon(Icons.coffee, "Coffee", false),
-                    ],
+                  //* Category Icons with proper styling
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildCategoryIcon(
+                          icon: Icons.restaurant,
+                          label: "Western",
+                          isActive: _selectedCategory == "Western",
+                        ),
+                        SizedBox(width: AppSpacing.md),
+                        _buildCategoryIcon(
+                          icon: Icons.bakery_dining,
+                          label: "Bread",
+                          isActive: _selectedCategory == "Bread",
+                        ),
+                        SizedBox(width: AppSpacing.md),
+                        _buildCategoryIcon(
+                          icon: Icons.soup_kitchen,
+                          label: "Soup",
+                          isActive: _selectedCategory == "Soup",
+                        ),
+                        SizedBox(width: AppSpacing.md),
+                        _buildCategoryIcon(
+                          icon: Icons.cake,
+                          label: "Dessert",
+                          isActive: _selectedCategory == "Dessert",
+                        ),
+                        SizedBox(width: AppSpacing.md),
+                        _buildCategoryIcon(
+                          icon: Icons.local_cafe,
+                          label: "Coffee",
+                          isActive: _selectedCategory == "Coffee",
+                        ),
+                      ],
+                    ),
                   ),
 
                   SizedBox(height: AppSpacing.xxl),
@@ -334,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   SizedBox(height: AppSpacing.lg),
 
-                  //* Horizontal Scrolling Recipe Cards with Favorites
+                  //* Horizontal Scrolling Recipe Cards
                   SizedBox(
                     height: 200,
                     child: _isLoadingTrending
@@ -344,64 +383,63 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           )
                         : _trendingRecipes.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No trending recipes found',
-                              style: AppTextStyles.bodyMedium,
-                            ),
-                          )
-                        : ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: _trendingRecipes.length,
-                            itemBuilder: (context, index) {
-                              final recipe = _trendingRecipes[index];
-                              return Padding(
-                                padding: EdgeInsets.only(
-                                  right: index == _trendingRecipes.length - 1
-                                      ? 0
-                                      : AppSpacing.lg,
+                            ? Center(
+                                child: Text(
+                                  'No trending recipes found',
+                                  style: AppTextStyles.bodyMedium,
                                 ),
-                                child: AnimatedBuilder(
-                                  animation: _favoritesState,
-                                  builder: (context, child) {
-                                    return RecipeCard(
-                                      imageUrl:
-                                          recipe.image ??
-                                          'assets/images/placeholder.png',
-                                      title: recipe.title,
-                                      time: '${recipe.readyInMinutes ?? 0} min',
-                                      isFavorite: _favoritesState.isFavorite(
-                                        recipe.id,
-                                      ),
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                RecipeDetailScreen(
+                              )
+                            : ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _trendingRecipes.length,
+                                itemBuilder: (context, index) {
+                                  final recipe = _trendingRecipes[index];
+                                  return Padding(
+                                    padding: EdgeInsets.only(
+                                      right: index == _trendingRecipes.length - 1
+                                          ? 0
+                                          : AppSpacing.lg,
+                                    ),
+                                    child: AnimatedBuilder(
+                                      animation: _favoritesState,
+                                      builder: (context, child) {
+                                        return RecipeCard(
+                                          imageUrl: recipe.image ??
+                                              'assets/images/placeholder.png',
+                                          title: recipe.title,
+                                          time:
+                                              '${recipe.readyInMinutes ?? 0} min',
+                                          isFavorite: _favoritesState
+                                              .isFavorite(recipe.id),
+                                          onTap: () {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (context) =>
+                                                    RecipeDetailScreen(
                                                   recipeId: recipe.id,
                                                 ),
-                                          ),
+                                              ),
+                                            );
+                                          },
+                                          onFavoritePressed: () =>
+                                              _handleFavoritePressed(recipe),
                                         );
                                       },
-                                      onFavoritePressed: () =>
-                                          _handleFavoritePressed(recipe),
-                                    );
-                                  },
-                                ),
-                              );
-                            },
-                          ),
+                                    ),
+                                  );
+                                },
+                              ),
                   ),
 
                   SizedBox(height: AppSpacing.xxl),
 
-                  //* Section Header: Popular
+                  //* Section Header: Category Recipes
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        "Popular This Week",
+                        "$_selectedCategory Recipes",
                         style: AppTextStyles.bodyLarge.copyWith(
                           fontWeight: FontWeight.w600,
                           fontSize: 18,
@@ -409,7 +447,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       GestureDetector(
                         onTap: () {
-                          print("See more popular clicked");
+                          print("See more $_selectedCategory clicked");
                         },
                         child: Row(
                           children: [
@@ -434,8 +472,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   SizedBox(height: AppSpacing.lg),
 
-                  //* Vertical Recipe Cards with Favorites
-                  _isLoadingPopular
+                  //* Vertical Recipe Cards for Selected Category
+                  _isLoadingCategory
                       ? Center(
                           child: Padding(
                             padding: EdgeInsets.all(AppSpacing.xxl),
@@ -444,50 +482,60 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         )
-                      : _popularRecipes.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(AppSpacing.xxl),
-                            child: Text(
-                              'No popular recipes found',
-                              style: AppTextStyles.bodyMedium,
-                            ),
-                          ),
-                        )
-                      : Column(
-                          children: _popularRecipes.map((recipe) {
-                            return AnimatedBuilder(
-                              animation: _favoritesState,
-                              builder: (context, child) {
-                                return RecipeCardVertical(
-                                  imageUrl:
-                                      recipe.image ??
-                                      'assets/images/placeholder.png',
-                                  title: recipe.title,
-                                  time: '${recipe.readyInMinutes ?? 0} min',
-                                  servings: '${recipe.servings ?? 0} servings',
-                                  difficulty: 'Medium',
-                                  isFavorite: _favoritesState.isFavorite(
-                                    recipe.id,
-                                  ),
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            RecipeDetailScreen(
+                      : _categoryRecipes.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(AppSpacing.xxl),
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.restaurant_menu,
+                                      size: 64,
+                                      color: AppColors.textTertiary,
+                                    ),
+                                    SizedBox(height: AppSpacing.lg),
+                                    Text(
+                                      'No $_selectedCategory recipes found',
+                                      style: AppTextStyles.bodyMedium,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : Column(
+                              children: _categoryRecipes.map((recipe) {
+                                return AnimatedBuilder(
+                                  animation: _favoritesState,
+                                  builder: (context, child) {
+                                    return RecipeCardVertical(
+                                      imageUrl: recipe.image ??
+                                          'assets/images/placeholder.png',
+                                      title: recipe.title,
+                                      time:
+                                          '${recipe.readyInMinutes ?? 0} min',
+                                      servings:
+                                          '${recipe.servings ?? 0} servings',
+                                      difficulty: 'Medium',
+                                      isFavorite: _favoritesState
+                                          .isFavorite(recipe.id),
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                RecipeDetailScreen(
                                               recipeId: recipe.id,
                                             ),
-                                      ),
+                                          ),
+                                        );
+                                      },
+                                      onFavoritePressed: () =>
+                                          _handleFavoritePressed(recipe),
                                     );
                                   },
-                                  onFavoritePressed: () =>
-                                      _handleFavoritePressed(recipe),
                                 );
-                              },
-                            );
-                          }).toList(),
-                        ),
+                              }).toList(),
+                            ),
                 ],
               ),
             ),
@@ -497,38 +545,67 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Builds category icon widget
-  Widget _buildCategoryIcon(IconData icon, String label, bool isActive) {
+  /// Builds category icon widget with improved design
+  Widget _buildCategoryIcon(
+    {required IconData icon, 
+    required String label, 
+    required bool isActive}
+  ) {
     return GestureDetector(
       onTap: () {
-        //* TODO: Filter recipes by category
-        print('Category selected: $label');
+        //* Load recipes for selected category
+        _loadCategoryRecipes(label);
       },
-      child: Column(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: isActive
-                ? AppDecorations.activeCategoryIconDecoration
-                : AppDecorations.categoryIconDecoration,
-            child: Icon(
+      child: AnimatedContainer(
+        duration: Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        padding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        decoration: BoxDecoration(
+          color: isActive 
+              ? AppColors.primaryAccent 
+              : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          border: Border.all(
+            color: isActive 
+                ? AppColors.primaryAccent 
+                : Colors.transparent,
+            width: 2,
+          ),
+          boxShadow: isActive
+              ? [
+                  BoxShadow(
+                    color: AppColors.primaryAccent.withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: Offset(0, 4),
+                  ),
+                ]
+              : [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
               icon,
-              color: isActive ? AppColors.primaryAccent : AppColors.textPrimary,
-              size: 28,
-            ),
-          ),
-          SizedBox(height: AppSpacing.sm),
-          Text(
-            label,
-            style: AppTextStyles.labelMedium.copyWith(
-              color: isActive
-                  ? AppColors.primaryAccent
+              color: isActive 
+                  ? AppColors.textPrimary 
                   : AppColors.textSecondary,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              size: 24,
             ),
-          ),
-        ],
+            SizedBox(width: AppSpacing.sm),
+            Text(
+              label,
+              style: AppTextStyles.labelLarge.copyWith(
+                color: isActive 
+                    ? AppColors.textPrimary 
+                    : AppColors.textSecondary,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

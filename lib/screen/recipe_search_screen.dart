@@ -18,6 +18,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   List<Recipe> _recipes = [];
   bool _isLoading = false;
   String? _error;
+  bool _isUsingCache = false; // Track if using cached results
 
   //* Services
   final FirestoreService _firestoreService = FirestoreService();
@@ -28,17 +29,18 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     super.dispose();
   }
 
-  /// Searches recipes from API and saves results to Firestore
+  /// Searches recipes from API with Firestore fallback
   Future<void> _searchRecipes() async {
     if (_searchController.text.isEmpty) return;
 
     setState(() {
       _isLoading = true;
       _error = null;
+      _isUsingCache = false;
     });
 
     try {
-      //* Search recipes from API
+      //* Try API first
       final recipes = await SpoonacularService.searchRecipes(
         query: _searchController.text,
         number: 20,
@@ -50,20 +52,37 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       setState(() {
         _recipes = recipes;
         _isLoading = false;
+        _isUsingCache = false;
       });
 
-      print('🔍 Found ${recipes.length} recipes for: ${_searchController.text}');
+      print('🔍 Found ${recipes.length} recipes from API for: ${_searchController.text}');
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
-      print('❌ Search error: $e');
+      print('⚠️ API limit reached, searching Firestore: $e');
+      
+      //* Fallback to Firestore
+      try {
+        final cachedRecipes = await _firestoreService.searchRecipesInFirestore(
+          _searchController.text,
+        );
+
+        setState(() {
+          _recipes = cachedRecipes.take(20).toList();
+          _isLoading = false;
+          _isUsingCache = true;
+        });
+
+        print('✅ Found ${cachedRecipes.length} recipes from cache');
+      } catch (cacheError) {
+        setState(() {
+          _error = 'No recipes found. Try a different search term.';
+          _isLoading = false;
+        });
+        print('❌ Cache search error: $cacheError');
+      }
     }
   }
 
   /// Saves search results to Firestore database
-  /// Runs in background without blocking UI
   Future<void> _saveSearchResultsToFirestore(List<Recipe> recipes) async {
     if (recipes.isEmpty) return;
 
@@ -72,7 +91,6 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       print('💾 Saved ${recipes.length} search results to Firestore');
     } catch (e) {
       print('⚠️ Failed to save search results: $e');
-      // Silent failure - don't interrupt user experience
     }
   }
 
@@ -116,6 +134,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
                             setState(() {
                               _searchController.clear();
                               _recipes.clear();
+                              _isUsingCache = false;
                             });
                           },
                         )
@@ -149,7 +168,40 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
               SizedBox(height: AppSpacing.lg),
 
-              //* Search suggestions or filters could go here
+              //* Cache indicator
+              if (_isUsingCache)
+                Container(
+                  padding: EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AppColors.info.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(
+                      color: AppColors.info.withOpacity(0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.storage,
+                        color: AppColors.info,
+                        size: 20,
+                      ),
+                      SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          'Showing cached results',
+                          style: AppTextStyles.labelMedium.copyWith(
+                            color: AppColors.info,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              if (_isUsingCache) SizedBox(height: AppSpacing.lg),
+
+              //* Search suggestions or filters
               if (_recipes.isEmpty && !_isLoading && _error == null)
                 _buildSearchSuggestions(),
 
@@ -206,21 +258,14 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.error_outline,
+              Icons.search_off,
               size: 64,
-              color: AppColors.favorite,
+              color: AppColors.textTertiary,
             ),
             SizedBox(height: AppSpacing.lg),
             Text(
-              'Oops! Something went wrong',
-              style: AppTextStyles.bodyLarge,
-            ),
-            SizedBox(height: AppSpacing.sm),
-            Text(
               _error!,
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textTertiary,
-              ),
+              style: AppTextStyles.bodyLarge,
               textAlign: TextAlign.center,
             ),
             SizedBox(height: AppSpacing.xl),

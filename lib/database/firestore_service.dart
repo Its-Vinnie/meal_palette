@@ -11,18 +11,11 @@ class FirestoreService {
   // ============================================================================
 
   /// Saves a single recipe to Firestore
-  /// Takes a Recipe model and converts it to a map before saving
-  /// Uses merge: true to avoid overwriting existing detailed data
   Future<void> saveRecipe(Recipe recipe) async {
     try {
-      //* Getting reference to the recipes collection
       CollectionReference recipes = _db.collection('recipes');
-
-      //* Using recipe id as the document name for easy retrieval
       String recipeId = recipe.id.toString();
 
-      //* Converting recipe to map and saving to Firestore
-      //* Using merge: true to preserve any detailed data that might exist
       await recipes.doc(recipeId).set(
             recipe.toMap(),
             SetOptions(merge: true),
@@ -31,37 +24,28 @@ class FirestoreService {
       print("✅ Recipe saved successfully: ${recipe.title}");
     } catch (e) {
       print("❌ Error saving recipe: $e");
-      // Don't rethrow - we don't want to break the app if saving fails
     }
   }
 
   /// Saves detailed recipe information to Firestore
-  /// Used when user views recipe details
   Future<void> saveDetailedRecipe(RecipeDetail recipe) async {
     try {
       CollectionReference recipes = _db.collection('recipes');
       String recipeId = recipe.id.toString();
 
-      //* Converting detailed recipe to map
-      //* merge: true ensures we don't lose any existing data
       await recipes.doc(recipeId).set(recipe.toMap(), SetOptions(merge: true));
 
       print("✅ Detailed recipe saved: ${recipe.title}");
     } catch (e) {
       print("❌ Error saving detailed recipe: $e");
-      // Don't rethrow - silent failure for background saves
     }
   }
 
   /// Saves multiple recipes in a batch operation
-  /// More efficient than saving one by one
-  /// Perfect for saving search results and home feed recipes
   Future<void> saveRecipesBatch(List<Recipe> recipeList) async {
     if (recipeList.isEmpty) return;
 
     try {
-      //* Firestore batch can handle up to 500 operations
-      //* Split into chunks if needed
       const int batchSize = 500;
       
       for (int i = 0; i < recipeList.length; i += batchSize) {
@@ -84,12 +68,10 @@ class FirestoreService {
       }
     } catch (e) {
       print("❌ Error in batch save: $e");
-      // Don't rethrow - silent failure for background saves
     }
   }
 
   /// Retrieves a single recipe by ID
-  /// Returns null if recipe doesn't exist
   Future<Map<String, dynamic>?> getRecipe(String recipeId) async {
     try {
       DocumentSnapshot doc =
@@ -108,8 +90,6 @@ class FirestoreService {
   }
 
   /// Gets all recipes from Firestore
-  /// Returns empty list if no recipes found
-  /// Useful for offline mode or recommendations
   Future<List<Map<String, dynamic>>> getAllRecipes() async {
     try {
       QuerySnapshot querySnapshot = await _db.collection('recipes').get();
@@ -130,44 +110,25 @@ class FirestoreService {
     }
   }
 
-  /// Gets recipes with pagination for better performance
-  /// Use this when building recommendation feeds
+  /// Gets recipes with pagination - IMPROVED for random selection
   Future<List<Recipe>> getRecipesPaginated({
     int limit = 20,
     DocumentSnapshot? startAfter,
   }) async {
     try {
-      Query query = _db.collection('recipes').limit(limit);
+      //* Get total count first
+      final countSnapshot = await _db.collection('recipes').count().get();
+      final totalRecipes = countSnapshot.count ?? 0;
 
-      if (startAfter != null) {
-        query = query.startAfterDocument(startAfter);
+      if (totalRecipes == 0) {
+        print("⚠️ No recipes in Firestore");
+        return [];
       }
 
-      QuerySnapshot querySnapshot = await query.get();
-
-      List<Recipe> recipes = querySnapshot.docs.map((doc) {
-        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        return Recipe.fromJson(data);
-      }).toList();
-
-      return recipes;
-    } catch (e) {
-      print("❌ Error getting paginated recipes: $e");
-      return [];
-    }
-  }
-
-  /// Searches recipes in Firestore by title
-  /// Useful for offline search or quick results
-  Future<List<Recipe>> searchRecipesInFirestore(String query) async {
-    try {
-      //* Simple search - Firestore doesn't support full-text search
-      //* For production, consider using Algolia or ElasticSearch
+      //* Get all recipes and shuffle for random selection
       QuerySnapshot querySnapshot = await _db
           .collection('recipes')
-          .where('title', isGreaterThanOrEqualTo: query)
-          .where('title', isLessThanOrEqualTo: '$query\uf8ff')
-          .limit(20)
+          .limit(limit * 3) // Get more to shuffle from
           .get();
 
       List<Recipe> recipes = querySnapshot.docs.map((doc) {
@@ -175,11 +136,145 @@ class FirestoreService {
         return Recipe.fromJson(data);
       }).toList();
 
-      print("🔍 Found ${recipes.length} recipes in Firestore");
-      return recipes;
+      //* Shuffle for random selection
+      recipes.shuffle();
+
+      //* Return limited amount
+      return recipes.take(limit).toList();
+    } catch (e) {
+      print("❌ Error getting paginated recipes: $e");
+      return [];
+    }
+  }
+
+  /// IMPROVED: Searches recipes in Firestore by title with better matching
+  Future<List<Recipe>> searchRecipesInFirestore(String query) async {
+    try {
+      if (query.isEmpty) {
+        return await getRecipesPaginated(limit: 20);
+      }
+
+      //* Get all recipes for client-side filtering (better search)
+      QuerySnapshot querySnapshot = await _db
+          .collection('recipes')
+          .get();
+
+      List<Recipe> allRecipes = querySnapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Recipe.fromJson(data);
+      }).toList();
+
+      //* Convert query to lowercase for case-insensitive search
+      final searchTerms = query.toLowerCase().split(' ');
+
+      //* Filter recipes based on search terms
+      List<Recipe> matchingRecipes = allRecipes.where((recipe) {
+        final titleLower = recipe.title.toLowerCase();
+        final summaryLower = (recipe.summary ?? '').toLowerCase();
+        
+        //* Check if any search term matches title or summary
+        return searchTerms.any((term) => 
+          titleLower.contains(term) || summaryLower.contains(term)
+        );
+      }).toList();
+
+      //* Sort by relevance (title matches first)
+      matchingRecipes.sort((a, b) {
+        final aTitle = a.title.toLowerCase();
+        final bTitle = b.title.toLowerCase();
+        final firstTerm = searchTerms.first;
+        
+        final aStartsWith = aTitle.startsWith(firstTerm);
+        final bStartsWith = bTitle.startsWith(firstTerm);
+        
+        if (aStartsWith && !bStartsWith) return -1;
+        if (!aStartsWith && bStartsWith) return 1;
+        return 0;
+      });
+
+      print("🔍 Found ${matchingRecipes.length} recipes in Firestore for: $query");
+      return matchingRecipes;
     } catch (e) {
       print("❌ Error searching in Firestore: $e");
       return [];
+    }
+  }
+
+  /// NEW: Get random recipes from Firestore (for trending/discovery)
+  Future<List<Recipe>> getRandomRecipes({int limit = 10}) async {
+    try {
+      //* Get a larger batch and shuffle
+      QuerySnapshot querySnapshot = await _db
+          .collection('recipes')
+          .limit(limit * 3)
+          .get();
+
+      List<Recipe> recipes = querySnapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Recipe.fromJson(data);
+      }).toList();
+
+      //* Shuffle and return limited amount
+      recipes.shuffle();
+      return recipes.take(limit).toList();
+    } catch (e) {
+      print("❌ Error getting random recipes: $e");
+      return [];
+    }
+  }
+
+  /// NEW: Get recipes by category keywords
+  Future<List<Recipe>> getRecipesByCategory(String category, {int limit = 10}) async {
+    try {
+      //* Define category keywords
+      final categoryKeywords = _getCategoryKeywords(category);
+      
+      //* Get all recipes and filter by keywords
+      QuerySnapshot querySnapshot = await _db
+          .collection('recipes')
+          .get();
+
+      List<Recipe> allRecipes = querySnapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Recipe.fromJson(data);
+      }).toList();
+
+      //* Filter by category keywords
+      List<Recipe> categoryRecipes = allRecipes.where((recipe) {
+        final titleLower = recipe.title.toLowerCase();
+        final summaryLower = (recipe.summary ?? '').toLowerCase();
+        
+        return categoryKeywords.any((keyword) =>
+          titleLower.contains(keyword) || summaryLower.contains(keyword)
+        );
+      }).toList();
+
+      //* Shuffle for variety
+      categoryRecipes.shuffle();
+
+      print("✅ Found ${categoryRecipes.length} recipes for category: $category");
+      return categoryRecipes.take(limit).toList();
+    } catch (e) {
+      print("❌ Error getting recipes by category: $e");
+      return [];
+    }
+  }
+
+  /// Helper: Get keywords for category
+  List<String> _getCategoryKeywords(String category) {
+    switch (category.toLowerCase()) {
+      case 'western':
+        return ['burger', 'steak', 'american', 'bbq', 'grilled'];
+      case 'bread':
+        return ['bread', 'baked', 'roll', 'bagel', 'toast'];
+      case 'soup':
+        return ['soup', 'broth', 'stew', 'chowder'];
+      case 'dessert':
+        return ['dessert', 'cake', 'sweet', 'chocolate', 'cookie', 'pie'];
+      case 'coffee':
+        return ['coffee', 'latte', 'espresso', 'cappuccino', 'drink'];
+      default:
+        return [category.toLowerCase()];
     }
   }
 
@@ -223,7 +318,6 @@ class FirestoreService {
   // ============================================================================
 
   /// Tracks when a user views a recipe
-  /// Useful for building personalized recommendations
   Future<void> trackRecipeView(String userId, int recipeId) async {
     try {
       await _db
@@ -240,12 +334,10 @@ class FirestoreService {
       print("📊 Tracked view for recipe: $recipeId");
     } catch (e) {
       print("❌ Error tracking recipe view: $e");
-      // Silent failure - analytics shouldn't break the app
     }
   }
 
   /// Gets user's recently viewed recipes
-  /// Perfect for "Continue Cooking" or "Recently Viewed" sections
   Future<List<Recipe>> getRecentlyViewedRecipes(String userId,
       {int limit = 10}) async {
     try {
@@ -257,13 +349,11 @@ class FirestoreService {
           .limit(limit)
           .get();
 
-      //* Get recipe IDs from view history
       List<int> recipeIds = viewHistory.docs
           .map((doc) => doc.data() as Map<String, dynamic>)
           .map((data) => data['recipeId'] as int)
           .toList();
 
-      //* Fetch actual recipes
       List<Recipe> recipes = [];
       for (int recipeId in recipeIds) {
         final recipeData = await getRecipe(recipeId.toString());
@@ -284,17 +374,14 @@ class FirestoreService {
   // ============================================================================
 
   /// Adds a recipe to user's favorites
-  /// userId should come from Firebase Auth in production
   Future<void> addToFavorites(String userId, Recipe recipe) async {
     try {
-      //* Reference to user's favorites subcollection
       DocumentReference favoriteRef = _db
           .collection('users')
           .doc(userId)
           .collection('favorites')
           .doc(recipe.id.toString());
 
-      //* Save recipe data with timestamp
       await favoriteRef.set({
         ...recipe.toMap(),
         'favoritedAt': FieldValue.serverTimestamp(),
@@ -342,7 +429,6 @@ class FirestoreService {
   }
 
   /// Gets all favorite recipes for a user
-  /// Returns them ordered by most recently favorited
   Future<List<Recipe>> getFavoriteRecipes(String userId) async {
     try {
       QuerySnapshot querySnapshot = await _db
@@ -368,7 +454,6 @@ class FirestoreService {
   }
 
   /// Stream of favorite recipes for real-time updates
-  /// Useful for keeping the favorites screen updated
   Stream<List<Recipe>> favoritesStream(String userId) {
     return _db
         .collection('users')
