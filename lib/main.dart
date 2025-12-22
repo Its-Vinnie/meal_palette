@@ -2,15 +2,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:meal_palette/screen/welcome_screen.dart';
 import 'package:meal_palette/screen/main_app_screen.dart';
+import 'package:meal_palette/service/auth_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 
 void main() async {
+  //* Ensure Flutter is ready before Firebase initializes
+  WidgetsFlutterBinding.ensureInitialized();
 
-  //* Ensures that flutter is ready before firebase initialises 
-  WidgetsFlutterBinding.ensureInitialized(); 
-
-  //* initialises firebase with the app 
-  Firebase.initializeApp();
+  //* Initialize Firebase
+  await Firebase.initializeApp();
 
   runApp(const MyApp());
 }
@@ -23,8 +23,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       theme: AppTheme.darkTheme,
       debugShowCheckedModeBanner: false,
-      home: WelcomeScreen(),
-      // Optional: Add named routes for better navigation
+      home: AuthStateHandler(),
       routes: {
         '/welcome': (context) => WelcomeScreen(),
         '/main': (context) => MainAppScreen(),
@@ -33,26 +32,52 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Handles authentication state and shows appropriate screen
+class AuthStateHandler extends StatelessWidget {
+  const AuthStateHandler({super.key});
 
-// import 'package:flutter/material.dart';
-// import 'package:meal_palette/screen/welcome_screen.dart';
-// import 'package:meal_palette/theme/theme_design.dart';
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder(
+      stream: authService.authStateChanges,
+      builder: (context, snapshot) {
+        //* Loading state while checking auth
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  //* App logo or icon here
+                  Icon(
+                    Icons.restaurant_menu,
+                    size: 80,
+                    color: AppColors.primaryAccent,
+                  ),
+                  SizedBox(height: AppSpacing.xl),
+                  CircularProgressIndicator(
+                    color: AppColors.primaryAccent,
+                  ),
+                  SizedBox(height: AppSpacing.lg),
+                  Text(
+                    'Meal Palette',
+                    style: AppTextStyles.pageHeadline,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
-// void main() {
-//   runApp(const MyApp());
-// }
+        //* User is logged in
+        if (snapshot.hasData && snapshot.data != null) {
+          return MainAppScreen();
+        }
 
-// class MyApp extends StatelessWidget {
-//   const MyApp({super.key});
-
-//   // This widget is the root of your application.
-//   @override
-//   Widget build(BuildContext context) {
-//     return MaterialApp(
-//       theme: AppTheme.darkTheme,
-//       debugShowCheckedModeBanner: false,
-//       home: WelcomeScreen(),
-//     );
-//   }
-// }
-
+        //* User is not logged in
+        return WelcomeScreen();
+      },
+    );
+  }
+}

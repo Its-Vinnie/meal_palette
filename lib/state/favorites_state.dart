@@ -1,14 +1,28 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:meal_palette/database/firestore_service.dart';
 import 'package:meal_palette/model/recipe_model.dart';
 
-/// State management for favorites using ValueNotifier
+/// State management for favorites using ChangeNotifier
 /// This allows widgets to reactively update when favorites change
+/// Now uses real Firebase Auth user ID
 class FavoritesState extends ChangeNotifier {
   //* Singleton pattern - ensures only one instance exists
   static final FavoritesState _instance = FavoritesState._internal();
   factory FavoritesState() => _instance;
-  FavoritesState._internal();
+  FavoritesState._internal() {
+    //* Listen to auth state changes
+    FirebaseAuth.instance.authStateChanges().listen((User? user) {
+      if (user != null) {
+        _currentUserId = user.uid;
+        // Schedule favorites loading for next frame to avoid setState during build
+        Future.microtask(() => loadFavorites());
+      } else {
+        _currentUserId = null;
+        clearFavorites(); // Clear favorites when logged out
+      }
+    });
+  }
 
   //* Firestore service for database operations
   final FirestoreService _firestoreService = FirestoreService();
@@ -22,8 +36,8 @@ class FavoritesState extends ChangeNotifier {
   //* Loading state
   bool _isLoading = false;
 
-  //* Current user ID (in production, get from Firebase Auth)
-  String _currentUserId = 'default_user'; // TODO: Replace with actual auth
+  //* Current user ID from Firebase Auth
+  String? _currentUserId;
 
   // ============================================================================
   // GETTERS
@@ -39,7 +53,7 @@ class FavoritesState extends ChangeNotifier {
   bool get isLoading => _isLoading;
 
   /// Returns current user ID
-  String get currentUserId => _currentUserId;
+  String get currentUserId => _currentUserId ?? '';
 
   /// Checks if a recipe is favorited
   bool isFavorite(int recipeId) => _favoriteIds.contains(recipeId);
@@ -51,21 +65,20 @@ class FavoritesState extends ChangeNotifier {
   // METHODS
   // ============================================================================
 
-  /// Sets the current user ID (call this after authentication)
-  void setUserId(String userId) {
-    _currentUserId = userId;
-    loadFavorites(); // Reload favorites for new user
-  }
-
-  /// Loads all favorites from Firestore
+  /// Loads all favorites from Firestore for current user
   Future<void> loadFavorites() async {
-    _isLoading = true;
-    notifyListeners();
+    if (_currentUserId == null) {
+      print('⚠️ No user logged in, cannot load favorites');
+      return;
+    }
 
+    // Set loading state without notifying during potential build phase
+    _isLoading = true;
+    
     try {
       //* Fetch favorites from Firestore
       final favorites =
-          await _firestoreService.getFavoriteRecipes(_currentUserId);
+          await _firestoreService.getFavoriteRecipes(_currentUserId!);
 
       //* Clear existing data
       _favoriteRecipes.clear();
@@ -75,11 +88,12 @@ class FavoritesState extends ChangeNotifier {
       _favoriteRecipes.addAll(favorites);
       _favoriteIds.addAll(favorites.map((r) => r.id));
 
-      print("✅ Loaded ${_favoriteRecipes.length} favorites");
+      print("✅ Loaded ${_favoriteRecipes.length} favorites for user: $_currentUserId");
     } catch (e) {
       print("❌ Error loading favorites: $e");
     } finally {
       _isLoading = false;
+      // Only notify listeners after async operations complete
       notifyListeners();
     }
   }
@@ -96,6 +110,11 @@ class FavoritesState extends ChangeNotifier {
 
   /// Adds a recipe to favorites
   Future<bool> addFavorite(Recipe recipe) async {
+    if (_currentUserId == null) {
+      print('⚠️ No user logged in, cannot add favorite');
+      return false;
+    }
+
     try {
       //* Optimistically update UI
       _favoriteIds.add(recipe.id);
@@ -103,7 +122,7 @@ class FavoritesState extends ChangeNotifier {
       notifyListeners();
 
       //* Save to Firestore
-      await _firestoreService.addToFavorites(_currentUserId, recipe);
+      await _firestoreService.addToFavorites(_currentUserId!, recipe);
 
       print("❤️ Added to favorites: ${recipe.title}");
       return true;
@@ -120,6 +139,11 @@ class FavoritesState extends ChangeNotifier {
 
   /// Removes a recipe from favorites
   Future<bool> removeFavorite(int recipeId) async {
+    if (_currentUserId == null) {
+      print('⚠️ No user logged in, cannot remove favorite');
+      return true;
+    }
+
     try {
       //* Store recipe for potential revert
       final removedRecipe =
@@ -131,7 +155,7 @@ class FavoritesState extends ChangeNotifier {
       notifyListeners();
 
       //* Remove from Firestore
-      await _firestoreService.removeFromFavorites(_currentUserId, recipeId);
+      await _firestoreService.removeFromFavorites(_currentUserId!, recipeId);
 
       print("💔 Removed from favorites: $recipeId");
       return false;
@@ -145,8 +169,10 @@ class FavoritesState extends ChangeNotifier {
 
   /// Checks if recipe is favorite from Firestore (for verification)
   Future<bool> checkIsFavorite(int recipeId) async {
+    if (_currentUserId == null) return false;
+
     try {
-      return await _firestoreService.isFavorite(_currentUserId, recipeId);
+      return await _firestoreService.isFavorite(_currentUserId!, recipeId);
     } catch (e) {
       print("❌ Error checking favorite status: $e");
       return false;

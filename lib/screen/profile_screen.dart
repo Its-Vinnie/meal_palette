@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:meal_palette/screen/edit_profile.dart';
-import 'package:meal_palette/state/edit_profile_state.dart';
+import 'package:meal_palette/screen/edit_profile_screen.dart';
+import 'package:meal_palette/screen/welcome_screen.dart';
+import 'package:meal_palette/service/auth_service.dart';
+import 'package:meal_palette/service/user_profile_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
+import 'package:meal_palette/widgets/animated_error_message.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -11,10 +14,92 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final ValueNotifier<String> name = EditProfileState().currentUsername;
+  //* Services
+  final UserProfileService _userProfileService = UserProfileService();
+  final AuthService _authService = authService;
+
+  //* User profile data
+  String _userName = 'User';
+  String _userEmail = '';
+  String _memberSince = 'December 2025';
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  /// Load user profile data
+  Future<void> _loadUserProfile() async {
+    try {
+      final profile = await _userProfileService.getCurrentUserProfile();
+      
+      if (profile != null && mounted) {
+        setState(() {
+          _userName = profile.displayName;
+          _userEmail = profile.email;
+          _memberSince = profile.memberSinceFormatted;
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      print('Error loading profile: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// Handle logout with confirmation
+  Future<void> _handleLogout() async {
+    final shouldLogout = await _showLogoutDialog(context);
+    
+    if (shouldLogout == true) {
+      try {
+        //* Show loading
+        if (mounted) {
+          ErrorMessageOverlay.showSuccess(
+            context,
+            'Logging out...',
+          );
+        }
+
+        //* Perform logout
+        await _authService.signOut();
+
+        //* Navigate to welcome screen and clear navigation stack
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => WelcomeScreen()),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ErrorMessageOverlay.showError(
+            context,
+            'Failed to logout. Please try again.',
+          );
+        }
+        print('Logout error: $e');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: CircularProgressIndicator(
+            color: AppColors.primaryAccent,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -32,14 +117,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Center(
                   child: Container(
                     padding: EdgeInsets.all(AppSpacing.xl),
-                    decoration: BoxDecoration(
-                      // color: AppColors.surface,
-                      // borderRadius: BorderRadius.circular(AppRadius.xl),
-                    ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Avatar
+                        // Avatar with Initials
                         Container(
                           width: 100,
                           height: 100,
@@ -47,21 +128,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             shape: BoxShape.circle,
                             color: AppColors.primaryAccent,
                           ),
-                          child: Icon(
-                            Icons.person,
-                            size: 50,
-                            color: AppColors.textPrimary,
+                          child: Center(
+                            child: Text(
+                              _userProfileService.getInitials(_userName),
+                              style: AppTextStyles.pageHeadline.copyWith(
+                                fontSize: 40,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
                           ),
                         ),
                         SizedBox(height: AppSpacing.lg),
 
                         // Name
-                        Text('Vincent', style: AppTextStyles.recipeTitle),
+                        Text(_userName, style: AppTextStyles.recipeTitle),
+                        SizedBox(height: AppSpacing.sm),
+
+                        // Email
+                        Text(
+                          _userEmail,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
                         SizedBox(height: AppSpacing.sm),
 
                         // Member Since
                         Text(
-                          'Member since December 2025',
+                          'Member since $_memberSince',
                           style: AppTextStyles.bodyMedium.copyWith(
                             color: AppColors.textSecondary,
                           ),
@@ -77,13 +171,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildProfileOption(
                   icon: Icons.edit_outlined,
                   title: 'Edit Profile',
-                  onTap: () {
-                    Navigator.push(
+                  onTap: () async {
+                    // Navigate to edit profile and reload when coming back
+                    await Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) => EditProfileScreen(),
                       ),
                     );
+                    // Reload profile data
+                    _loadUserProfile();
                   },
                 ),
                 SizedBox(height: AppSpacing.md),
@@ -120,15 +217,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
-                    onPressed: () {
-                      _showLogoutDialog(context);
-                    },
+                    onPressed: _handleLogout,
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: AppColors.favorite),
                       foregroundColor: AppColors.favorite,
                       padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
                     ),
-                    child: Text('Logout'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.logout),
+                        SizedBox(width: AppSpacing.sm),
+                        Text('Logout'),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -175,8 +277,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showLogoutDialog(BuildContext context) {
-    showDialog(
+  Future<bool?> _showLogoutDialog(BuildContext context) {
+    return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.surface,
@@ -190,15 +292,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // TODO: Add logout functionality
-              print('Logged out');
-            },
+            onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.favorite,
             ),

@@ -19,7 +19,7 @@ class CustomBottomNavBar extends StatelessWidget {
         color: AppColors.background,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha:0.1),
             blurRadius: 20,
             offset: Offset(0, -5),
           ),
@@ -81,7 +81,7 @@ class CustomBottomNavBar extends StatelessWidget {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.primaryAccent.withOpacity(0.4),
+                      color: AppColors.primaryAccent.withValues(alpha:0.4),
                       blurRadius: 20,
                       offset: Offset(0, 8),
                     ),
