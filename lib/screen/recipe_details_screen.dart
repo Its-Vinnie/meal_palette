@@ -20,6 +20,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   RecipeDetail? _recipe;
   bool _isLoading = true;
   String? _error;
+  bool _isUsingCache = false; // Track if using cached data
 
   //* Services and state
   final FirestoreService _firestoreService = FirestoreService();
@@ -31,14 +32,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     _loadRecipe();
   }
 
-  /// Loads recipe details from API and saves to Firestore
+  /// Loads recipe details from API with Firestore fallback
   Future<void> _loadRecipe() async {
     try {
-      //* Fetch recipe details from API
-      final recipe =
-          await SpoonacularService.getRecipeDetails(widget.recipeId);
+      //* Try API first
+      final recipe = await SpoonacularService.getRecipeDetails(widget.recipeId);
 
-      //* Save detailed recipe to Firestore using toMap()
+      //* Save detailed recipe to Firestore
       await _firestoreService.saveDetailedRecipe(recipe);
 
       //* Track that user viewed this recipe
@@ -51,15 +51,51 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       setState(() {
         _recipe = recipe;
         _isLoading = false;
+        _isUsingCache = false;
       });
 
-      print("✅ Recipe loaded and saved: ${recipe.title}");
+      print("✅ Recipe loaded from API and saved: ${recipe.title}");
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
-      print("❌ Error loading recipe: $e");
+      print("⚠️ API limit reached, loading from Firestore: $e");
+      
+      //* Fallback to Firestore
+      try {
+        final cachedRecipeData = await _firestoreService.getRecipe(
+          widget.recipeId.toString(),
+        );
+
+        if (cachedRecipeData != null) {
+          //* Convert to RecipeDetail
+          final cachedRecipe = RecipeDetail.fromJson(cachedRecipeData);
+
+          //* Track view even from cache
+          await _firestoreService.trackRecipeView(
+            _favoritesState.currentUserId,
+            cachedRecipe.id,
+          );
+
+          setState(() {
+            _recipe = cachedRecipe;
+            _isLoading = false;
+            _isUsingCache = true;
+          });
+
+          print("✅ Recipe loaded from Firestore cache: ${cachedRecipe.title}");
+        } else {
+          //* Recipe not in cache
+          setState(() {
+            _error = 'Recipe details not available offline. Please try again when connected.';
+            _isLoading = false;
+          });
+          print("❌ Recipe not found in cache: ${widget.recipeId}");
+        }
+      } catch (cacheError) {
+        setState(() {
+          _error = 'Failed to load recipe details';
+          _isLoading = false;
+        });
+        print("❌ Error loading from Firestore: $cacheError");
+      }
     }
   }
 
@@ -105,7 +141,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       return Scaffold(
         backgroundColor: AppColors.background,
         body: Center(
-          child: CircularProgressIndicator(color: AppColors.primaryAccent),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: AppColors.primaryAccent),
+              SizedBox(height: AppSpacing.lg),
+              Text(
+                'Loading recipe...',
+                style: AppTextStyles.bodyMedium,
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -122,39 +168,59 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           ),
         ),
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 64,
-                color: AppColors.favorite,
-              ),
-              SizedBox(height: AppSpacing.lg),
-              Text(
-                'Error loading recipe',
-                style: AppTextStyles.bodyLarge,
-              ),
-              SizedBox(height: AppSpacing.md),
-              Text(
-                _error ?? 'Unknown error',
-                style: AppTextStyles.bodyMedium.copyWith(
+          child: Padding(
+            padding: EdgeInsets.all(AppSpacing.xl),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.cloud_off_outlined,
+                  size: 64,
                   color: AppColors.textTertiary,
                 ),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: AppSpacing.xl),
-              ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    _isLoading = true;
-                    _error = null;
-                  });
-                  _loadRecipe();
-                },
-                child: Text('Retry'),
-              ),
-            ],
+                SizedBox(height: AppSpacing.xl),
+                Text(
+                  'Recipe Not Available',
+                  style: AppTextStyles.recipeTitle,
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: AppSpacing.md),
+                Text(
+                  _error ?? 'This recipe hasn\'t been cached yet. Please try viewing it when you have an active internet connection.',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: AppSpacing.xxl),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: AppColors.textTertiary),
+                      ),
+                      child: Text('Go Back'),
+                    ),
+                    SizedBox(width: AppSpacing.md),
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _isLoading = true;
+                          _error = null;
+                        });
+                        _loadRecipe();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryAccent,
+                      ),
+                      child: Text('Retry'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -281,6 +347,38 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  //* Cache indicator
+                  if (_isUsingCache)
+                    Container(
+                      margin: EdgeInsets.only(bottom: AppSpacing.lg),
+                      padding: EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.info.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        border: Border.all(
+                          color: AppColors.info.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.storage,
+                            color: AppColors.info,
+                            size: 20,
+                          ),
+                          SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              'Showing cached recipe details',
+                              style: AppTextStyles.labelMedium.copyWith(
+                                color: AppColors.info,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   //* Info Row (time, servings)
                   Row(
                     children: [
@@ -320,31 +418,57 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   Text('Ingredients', style: AppTextStyles.recipeTitle),
                   SizedBox(height: AppSpacing.lg),
 
-                  ..._recipe!.ingredients.map(
-                    (ingredient) => Padding(
-                      padding: EdgeInsets.only(bottom: AppSpacing.md),
+                  if (_recipe!.ingredients.isEmpty)
+                    Container(
+                      padding: EdgeInsets.all(AppSpacing.lg),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            margin: EdgeInsets.only(top: 6, right: 12),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryAccent,
-                              shape: BoxShape.circle,
-                            ),
+                          Icon(
+                            Icons.info_outline,
+                            color: AppColors.textTertiary,
                           ),
+                          SizedBox(width: AppSpacing.md),
                           Expanded(
                             child: Text(
-                              ingredient.original,
-                              style: AppTextStyles.bodyMedium,
+                              'No ingredients information available.',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                color: AppColors.textTertiary,
+                              ),
                             ),
                           ),
                         ],
                       ),
+                    )
+                  else
+                    ..._recipe!.ingredients.map(
+                      (ingredient) => Padding(
+                        padding: EdgeInsets.only(bottom: AppSpacing.md),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              margin: EdgeInsets.only(top: 6, right: 12),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryAccent,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                ingredient.original,
+                                style: AppTextStyles.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
 
                   SizedBox(height: AppSpacing.xxl),
 

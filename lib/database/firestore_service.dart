@@ -16,10 +16,7 @@ class FirestoreService {
       CollectionReference recipes = _db.collection('recipes');
       String recipeId = recipe.id.toString();
 
-      await recipes.doc(recipeId).set(
-            recipe.toMap(),
-            SetOptions(merge: true),
-          );
+      await recipes.doc(recipeId).set(recipe.toMap(), SetOptions(merge: true));
 
       print("✅ Recipe saved successfully: ${recipe.title}");
     } catch (e) {
@@ -47,14 +44,14 @@ class FirestoreService {
 
     try {
       const int batchSize = 500;
-      
+
       for (int i = 0; i < recipeList.length; i += batchSize) {
         WriteBatch batch = _db.batch();
-        
-        int end = (i + batchSize < recipeList.length) 
-            ? i + batchSize 
+
+        int end = (i + batchSize < recipeList.length)
+            ? i + batchSize
             : recipeList.length;
-        
+
         List<Recipe> chunk = recipeList.sublist(i, end);
 
         for (Recipe recipe in chunk) {
@@ -64,7 +61,9 @@ class FirestoreService {
         }
 
         await batch.commit();
-        print("✅ Batch saved ${chunk.length} recipes (${i + 1}-$end of ${recipeList.length})");
+        print(
+          "✅ Batch saved ${chunk.length} recipes (${i + 1}-$end of ${recipeList.length})",
+        );
       }
     } catch (e) {
       print("❌ Error in batch save: $e");
@@ -74,8 +73,10 @@ class FirestoreService {
   /// Retrieves a single recipe by ID
   Future<Map<String, dynamic>?> getRecipe(String recipeId) async {
     try {
-      DocumentSnapshot doc =
-          await _db.collection('recipes').doc(recipeId).get();
+      DocumentSnapshot doc = await _db
+          .collection('recipes')
+          .doc(recipeId)
+          .get();
 
       if (doc.exists) {
         return doc.data() as Map<String, dynamic>;
@@ -155,9 +156,7 @@ class FirestoreService {
       }
 
       //* Get all recipes for client-side filtering (better search)
-      QuerySnapshot querySnapshot = await _db
-          .collection('recipes')
-          .get();
+      QuerySnapshot querySnapshot = await _db.collection('recipes').get();
 
       List<Recipe> allRecipes = querySnapshot.docs.map((doc) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
@@ -171,10 +170,10 @@ class FirestoreService {
       List<Recipe> matchingRecipes = allRecipes.where((recipe) {
         final titleLower = recipe.title.toLowerCase();
         final summaryLower = (recipe.summary ?? '').toLowerCase();
-        
+
         //* Check if any search term matches title or summary
-        return searchTerms.any((term) => 
-          titleLower.contains(term) || summaryLower.contains(term)
+        return searchTerms.any(
+          (term) => titleLower.contains(term) || summaryLower.contains(term),
         );
       }).toList();
 
@@ -183,16 +182,18 @@ class FirestoreService {
         final aTitle = a.title.toLowerCase();
         final bTitle = b.title.toLowerCase();
         final firstTerm = searchTerms.first;
-        
+
         final aStartsWith = aTitle.startsWith(firstTerm);
         final bStartsWith = bTitle.startsWith(firstTerm);
-        
+
         if (aStartsWith && !bStartsWith) return -1;
         if (!aStartsWith && bStartsWith) return 1;
         return 0;
       });
 
-      print("🔍 Found ${matchingRecipes.length} recipes in Firestore for: $query");
+      print(
+        "🔍 Found ${matchingRecipes.length} recipes in Firestore for: $query",
+      );
       return matchingRecipes;
     } catch (e) {
       print("❌ Error searching in Firestore: $e");
@@ -224,15 +225,16 @@ class FirestoreService {
   }
 
   /// NEW: Get recipes by category keywords
-  Future<List<Recipe>> getRecipesByCategory(String category, {int limit = 10}) async {
+  Future<List<Recipe>> getRecipesByCategory(
+    String category, {
+    int limit = 10,
+  }) async {
     try {
       //* Define category keywords
       final categoryKeywords = _getCategoryKeywords(category);
-      
+
       //* Get all recipes and filter by keywords
-      QuerySnapshot querySnapshot = await _db
-          .collection('recipes')
-          .get();
+      QuerySnapshot querySnapshot = await _db.collection('recipes').get();
 
       List<Recipe> allRecipes = querySnapshot.docs.map((doc) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
@@ -243,16 +245,19 @@ class FirestoreService {
       List<Recipe> categoryRecipes = allRecipes.where((recipe) {
         final titleLower = recipe.title.toLowerCase();
         final summaryLower = (recipe.summary ?? '').toLowerCase();
-        
-        return categoryKeywords.any((keyword) =>
-          titleLower.contains(keyword) || summaryLower.contains(keyword)
+
+        return categoryKeywords.any(
+          (keyword) =>
+              titleLower.contains(keyword) || summaryLower.contains(keyword),
         );
       }).toList();
 
       //* Shuffle for variety
       categoryRecipes.shuffle();
 
-      print("✅ Found ${categoryRecipes.length} recipes for category: $category");
+      print(
+        "✅ Found ${categoryRecipes.length} recipes for category: $category",
+      );
       return categoryRecipes.take(limit).toList();
     } catch (e) {
       print("❌ Error getting recipes by category: $e");
@@ -281,8 +286,10 @@ class FirestoreService {
   /// Checks if a recipe exists in Firestore
   Future<bool> recipeExists(String recipeId) async {
     try {
-      DocumentSnapshot doc =
-          await _db.collection('recipes').doc(recipeId).get();
+      DocumentSnapshot doc = await _db
+          .collection('recipes')
+          .doc(recipeId)
+          .get();
       return doc.exists;
     } catch (e) {
       print("❌ Error checking recipe existence: $e");
@@ -292,7 +299,9 @@ class FirestoreService {
 
   /// Updates specific fields of a recipe
   Future<void> updateRecipe(
-      String recipeId, Map<String, dynamic> updates) async {
+    String recipeId,
+    Map<String, dynamic> updates,
+  ) async {
     try {
       await _db.collection('recipes').doc(recipeId).update(updates);
       print("✅ Recipe updated successfully");
@@ -326,10 +335,10 @@ class FirestoreService {
           .collection('viewHistory')
           .doc(recipeId.toString())
           .set({
-        'recipeId': recipeId,
-        'viewedAt': FieldValue.serverTimestamp(),
-        'viewCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
+            'recipeId': recipeId,
+            'viewedAt': FieldValue.serverTimestamp(),
+            'viewCount': FieldValue.increment(1),
+          }, SetOptions(merge: true));
 
       print("📊 Tracked view for recipe: $recipeId");
     } catch (e) {
@@ -338,8 +347,10 @@ class FirestoreService {
   }
 
   /// Gets user's recently viewed recipes
-  Future<List<Recipe>> getRecentlyViewedRecipes(String userId,
-      {int limit = 10}) async {
+  Future<List<Recipe>> getRecentlyViewedRecipes(
+    String userId, {
+    int limit = 10,
+  }) async {
     try {
       QuerySnapshot viewHistory = await _db
           .collection('users')
@@ -462,10 +473,10 @@ class FirestoreService {
         .orderBy('favoritedAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        return Recipe.fromJson(doc.data());
-      }).toList();
-    });
+          return snapshot.docs.map((doc) {
+            return Recipe.fromJson(doc.data());
+          }).toList();
+        });
   }
 
   // ============================================================================
@@ -473,8 +484,11 @@ class FirestoreService {
   // ============================================================================
 
   /// Creates or updates user profile
-  Future<void> saveUserProfile(String userId,
-      {required String name, required String email}) async {
+  Future<void> saveUserProfile(
+    String userId, {
+    required String name,
+    required String email,
+  }) async {
     try {
       await _db.collection('users').doc(userId).set({
         'name': name,
@@ -507,7 +521,9 @@ class FirestoreService {
 
   /// Updates user profile fields
   Future<void> updateUserProfile(
-      String userId, Map<String, dynamic> updates) async {
+    String userId,
+    Map<String, dynamic> updates,
+  ) async {
     try {
       updates['updatedAt'] = FieldValue.serverTimestamp();
       await _db.collection('users').doc(userId).update(updates);
@@ -529,7 +545,7 @@ class FirestoreService {
           .collection('recipes')
           .count()
           .get();
-      
+
       return snapshot.count ?? 0;
     } catch (e) {
       print("❌ Error getting recipe count: $e");
