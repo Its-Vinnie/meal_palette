@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:meal_palette/screen/edit_preferences_screen.dart';
 import 'package:meal_palette/screen/edit_profile_screen.dart';
+import 'package:meal_palette/screen/manage_groceries_screen.dart';
+import 'package:meal_palette/screen/my_recipes_screen.dart';
+import 'package:meal_palette/screen/url_recipe_import_screen.dart';
+import 'package:meal_palette/screen/voice_settings_screen.dart';
 import 'package:meal_palette/screen/welcome_screen.dart';
 import 'package:meal_palette/service/auth_service.dart';
-import 'package:meal_palette/service/user_profile_service.dart';
+import 'package:meal_palette/state/user_profile_state.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/animated_error_message.dart';
 
@@ -14,47 +19,14 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  //* Services
-  final UserProfileService _userProfileService = UserProfileService();
+  //* Services and state
   final AuthService _authService = authService;
-
-  //* User profile data
-  String _userName = 'User';
-  String _userEmail = '';
-  String _memberSince = 'December 2025';
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadUserProfile();
-  }
-
-  /// Load user profile data
-  Future<void> _loadUserProfile() async {
-    try {
-      final profile = await _userProfileService.getCurrentUserProfile();
-      
-      if (profile != null && mounted) {
-        setState(() {
-          _userName = profile.displayName;
-          _userEmail = profile.email;
-          _memberSince = profile.memberSinceFormatted;
-          _isLoading = false;
-        });
-      } else {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      print('Error loading profile: $e');
-      setState(() => _isLoading = false);
-    }
-  }
+  final UserProfileState _userProfileState = UserProfileState();
 
   /// Handle logout with confirmation
   Future<void> _handleLogout() async {
     final shouldLogout = await _showLogoutDialog(context);
-    
+
     if (shouldLogout == true) {
       try {
         //* Show loading
@@ -87,19 +59,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// Navigate to voice settings screen
+  Future<void> _openVoiceSettings() async {
+    final userProfile = _userProfileState.userProfile;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VoiceSettingsScreen(
+          initialSettings: userProfile?.voiceSettings,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        body: Center(
-          child: CircularProgressIndicator(
-            color: AppColors.primaryAccent,
-          ),
-        ),
-      );
-    }
+    return AnimatedBuilder(
+      animation: _userProfileState,
+      builder: (context, child) {
+        //* Show loading while profile loads
+        if (_userProfileState.isLoading) {
+          return Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(
+              child: CircularProgressIndicator(
+                color: AppColors.primaryAccent,
+              ),
+            ),
+          );
+        }
 
+        return _buildProfileContent();
+      },
+    );
+  }
+
+  Widget _buildProfileContent() {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -130,7 +126,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           child: Center(
                             child: Text(
-                              _userProfileService.getInitials(_userName),
+                              _userProfileState.initials,
                               style: AppTextStyles.pageHeadline.copyWith(
                                 fontSize: 40,
                                 color: AppColors.textPrimary,
@@ -141,12 +137,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         SizedBox(height: AppSpacing.lg),
 
                         // Name
-                        Text(_userName, style: AppTextStyles.recipeTitle),
+                        Text(
+                          _userProfileState.displayName,
+                          style: AppTextStyles.recipeTitle,
+                        ),
                         SizedBox(height: AppSpacing.sm),
 
                         // Email
                         Text(
-                          _userEmail,
+                          _userProfileState.email,
                           style: AppTextStyles.bodyMedium.copyWith(
                             color: AppColors.textTertiary,
                           ),
@@ -155,7 +154,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                         // Member Since
                         Text(
-                          'Member since $_memberSince',
+                          'Member since ${_userProfileState.memberSince}',
                           style: AppTextStyles.bodyMedium.copyWith(
                             color: AppColors.textSecondary,
                           ),
@@ -172,15 +171,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   icon: Icons.edit_outlined,
                   title: 'Edit Profile',
                   onTap: () async {
-                    // Navigate to edit profile and reload when coming back
+                    // Navigate to edit profile
+                    // No need to reload - UserProfileState auto-updates
                     await Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) => EditProfileScreen(),
                       ),
                     );
-                    // Reload profile data
-                    _loadUserProfile();
                   },
                 ),
                 SizedBox(height: AppSpacing.md),
@@ -195,7 +193,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildProfileOption(
                   icon: Icons.restaurant_menu_outlined,
                   title: 'My Recipes',
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => MyRecipesScreen()));
+                  },
+                ),
+                SizedBox(height: AppSpacing.md),
+
+                _buildProfileOption(
+                  icon: Icons.shopping_cart_outlined,
+                  title: 'Grocery List',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ManageGroceriesScreen(),
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(height: AppSpacing.md),
+
+                _buildProfileOption(
+                  icon: Icons.link_outlined,
+                  title: 'Import Recipe from URL',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const UrlRecipeImportScreen(),
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(height: AppSpacing.md),
+
+                _buildProfileOption(
+                  icon: Icons.record_voice_over_outlined,
+                  title: 'Voice Settings',
+                  onTap: _openVoiceSettings,
+                ),
+                SizedBox(height: AppSpacing.md),
+
+                _buildProfileOption(
+                  icon: Icons.tune_outlined,
+                  title: 'Food Preferences',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const EditPreferencesScreen(),
+                      ),
+                    );
+                  },
                 ),
                 SizedBox(height: AppSpacing.md),
 

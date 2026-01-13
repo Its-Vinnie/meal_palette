@@ -1,9 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-import 'package:meal_palette/database/firestore_service.dart';
+import 'package:meal_palette/service/user_profile_service.dart';
 
 /// Enhanced Authentication Service
 /// Handles all authentication operations including:
@@ -18,10 +17,10 @@ class AuthService extends ChangeNotifier {
   factory AuthService() => _instance;
   AuthService._internal();
 
-  //* Firebase instances
+  //* Firebase instances and services
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
-  final FirestoreService _firestoreService = FirestoreService();
+  final UserProfileService _userProfileService = UserProfileService();
 
   //* Current user getter
   User? get currentUser => _firebaseAuth.currentUser;
@@ -260,33 +259,14 @@ class AuthService extends ChangeNotifier {
     required String provider,
   }) async {
     try {
-      //* Check if profile already exists
-      final existingProfile = await _firestoreService.getUserProfile(userId);
+      //* Use UserProfileService to create/update profile
+      await _userProfileService.createOrUpdateUserProfile(
+        uid: userId,
+        email: email,
+        displayName: name,
+      );
 
-      if (existingProfile == null) {
-        //* Create new profile
-        await _firestoreService.saveUserProfile(
-          userId,
-          name: name,
-          email: email,
-        );
-
-        //* Add additional profile fields
-        await _firestoreService.updateUserProfile(userId, {
-          'photoUrl': photoUrl,
-          'provider': provider,
-          'lastSignIn': FieldValue.serverTimestamp(),
-        });
-
-        print("✅ User profile created in Firestore");
-      } else {
-        //* Update existing profile
-        await _firestoreService.updateUserProfile(userId, {
-          'lastSignIn': FieldValue.serverTimestamp(),
-        });
-
-        print("✅ User profile updated in Firestore");
-      }
+      print("✅ User profile created/updated in Firestore");
     } catch (e) {
       print("❌ Error managing user profile: $e");
       // Don't throw - profile creation failure shouldn't block auth
@@ -365,19 +345,16 @@ class AuthService extends ChangeNotifier {
   /// Update display name
   Future<bool> updateDisplayName({required String name}) async {
     try {
-      await currentUser?.updateDisplayName(name);
-      
-      //* Also update in Firestore
-      if (currentUser != null) {
-        await _firestoreService.updateUserProfile(
-          currentUser!.uid,
-          {'name': name},
-        );
+      //* Use UserProfileService to update display name
+      final success = await _userProfileService.updateDisplayName(name);
+
+      if (success) {
+        notifyListeners();
+        print("✅ Display name updated to: $name");
+        return true;
       }
 
-      notifyListeners();
-      print("✅ Display name updated to: $name");
-      return true;
+      return false;
     } catch (e) {
       _setError("Failed to update name");
       print("❌ Update name error: $e");

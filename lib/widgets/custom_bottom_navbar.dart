@@ -19,7 +19,7 @@ class CustomBottomNavBar extends StatelessWidget {
         color: AppColors.background,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha:0.1),
+            color: Colors.black.withOpacity(0.1),
             blurRadius: 20,
             offset: Offset(0, -5),
           ),
@@ -29,39 +29,42 @@ class CustomBottomNavBar extends StatelessWidget {
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
-          // Bottom Nav Items
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildNavItem(
-                icon: Icons.home_outlined,
-                activeIcon: Icons.home,
-                label: 'Home',
-                index: 0,
-              ),
-              _buildNavItem(
-                icon: Icons.search_outlined,
-                activeIcon: Icons.search,
-                label: 'Search',
-                index: 1,
-              ),
-              SizedBox(width: 60), // Space for FAB
-              _buildNavItem(
-                icon: Icons.favorite_border,
-                activeIcon: Icons.favorite,
-                label: 'Favorites',
-                index: 2,
-              ),
-              _buildNavItem(
-                icon: Icons.person_outline,
-                activeIcon: Icons.person,
-                label: 'Profile',
-                index: 3,
-              ),
-            ],
+          //* Bottom Nav Items with proper padding from edges
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildNavItem(
+                  icon: Icons.home_outlined,
+                  activeIcon: Icons.home,
+                  label: 'Home',
+                  index: 0,
+                ),
+                _buildNavItem(
+                  icon: Icons.search_outlined,
+                  activeIcon: Icons.search,
+                  label: 'Search',
+                  index: 1,
+                ),
+                const SizedBox(width: 60), // Space for FAB
+                _buildNavItem(
+                  icon: Icons.collections_bookmark_outlined,
+                  activeIcon: Icons.collections_bookmark,
+                  label: 'Collections',
+                  index: 2,
+                ),
+                _buildNavItem(
+                  icon: Icons.person_outline,
+                  activeIcon: Icons.person,
+                  label: 'Profile',
+                  index: 3,
+                ),
+              ],
+            ),
           ),
 
-          // Floating Action Button (Center)
+          //* Floating Action Button (Center)
           Positioned(
             top: -25,
             child: GestureDetector(
@@ -81,7 +84,7 @@ class CustomBottomNavBar extends StatelessWidget {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.primaryAccent.withValues(alpha:0.4),
+                      color: AppColors.primaryAccent.withOpacity(0.4),
                       blurRadius: 20,
                       offset: Offset(0, 8),
                     ),
@@ -112,7 +115,10 @@ class CustomBottomNavBar extends StatelessWidget {
       onTap: () => onTap(index),
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: 8,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -137,7 +143,7 @@ class CustomBottomNavBar extends StatelessWidget {
   }
 }
 
-// Alternative: Material 3 Style Bottom Nav (Simpler)
+// Alternative: Material 3 Style Bottom Nav (Simpler) - Also with proper padding
 class SimpleBottomNavBar extends StatelessWidget {
   final int currentIndex;
   final Function(int) onTap;
@@ -150,39 +156,56 @@ class SimpleBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BottomNavigationBar(
-      currentIndex: currentIndex,
-      onTap: onTap,
-      type: BottomNavigationBarType.fixed,
-      backgroundColor: AppColors.background,
-      selectedItemColor: AppColors.primaryAccent,
-      unselectedItemColor: AppColors.textTertiary,
-      selectedFontSize: 12,
-      unselectedFontSize: 11,
-      selectedLabelStyle: TextStyle(fontWeight: FontWeight.w600),
-      elevation: 10,
-      items: [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.home_outlined),
-          activeIcon: Icon(Icons.home),
-          label: 'Home',
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 20,
+            offset: Offset(0, -5),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.sm,
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.search_outlined),
-          activeIcon: Icon(Icons.search),
-          label: 'Search',
+        child: BottomNavigationBar(
+          currentIndex: currentIndex,
+          onTap: onTap,
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: AppColors.background,
+          selectedItemColor: AppColors.primaryAccent,
+          unselectedItemColor: AppColors.textTertiary,
+          selectedFontSize: 12,
+          unselectedFontSize: 11,
+          selectedLabelStyle: TextStyle(fontWeight: FontWeight.w600),
+          elevation: 0,
+          items: [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
+              label: 'Home',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.search_outlined),
+              activeIcon: Icon(Icons.search),
+              label: 'Search',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.favorite_border),
+              activeIcon: Icon(Icons.favorite),
+              label: 'Favorites',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline),
+              activeIcon: Icon(Icons.person),
+              label: 'Profile',
+            ),
+          ],
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.favorite_border),
-          activeIcon: Icon(Icons.favorite),
-          label: 'Favorites',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.person_outline),
-          activeIcon: Icon(Icons.person),
-          label: 'Profile',
-        ),
-      ],
+      ),
     );
   }
 }

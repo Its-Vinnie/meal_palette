@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:meal_palette/database/firestore_service.dart';
 import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/screen/recipe_details_screen.dart';
+import 'package:meal_palette/service/recipe_cache_service.dart';
 import 'package:meal_palette/service/spoonacular_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 
@@ -39,15 +40,17 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       _isUsingCache = false;
     });
 
+    final recipeCacheService = RecipeCacheService();
+
     try {
       //* Try API first
       final recipes = await SpoonacularService.searchRecipes(
-        query: _searchController.text,
+        _searchController.text,
         number: 20,
       );
 
-      //* Save search results to Firestore in background
-      _saveSearchResultsToFirestore(recipes);
+      //* ✨ NEW: Automatically cache ALL search results with full details
+      recipeCacheService.cacheRecipes(recipes);
 
       setState(() {
         _recipes = recipes;
@@ -55,10 +58,11 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
         _isUsingCache = false;
       });
 
-      print('🔍 Found ${recipes.length} recipes from API for: ${_searchController.text}');
+      print(
+          '🔍 Found ${recipes.length} recipes from API for: ${_searchController.text}');
     } catch (e) {
       print('⚠️ API limit reached, searching Firestore: $e');
-      
+
       //* Fallback to Firestore
       try {
         final cachedRecipes = await _firestoreService.searchRecipesInFirestore(

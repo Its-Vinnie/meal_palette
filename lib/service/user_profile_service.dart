@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:meal_palette/model/user_model.dart';
+import 'package:meal_palette/model/voice_settings_model.dart';
 
 /// Service for managing user profile data in Firestore
 /// No profile pictures - uses initials-based avatars
@@ -157,6 +158,22 @@ class UserProfileService {
     }
   }
 
+  /// Updates user's voice settings for cook-along mode
+  Future<bool> updateVoiceSettings(String uid, VoiceSettings settings) async {
+    try {
+      await _firestore.collection('users').doc(uid).update({
+        'voiceSettings': settings.toJson(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ Voice settings updated');
+      return true;
+    } catch (e) {
+      print('❌ Error updating voice settings: $e');
+      return false;
+    }
+  }
+
   // ============================================================================
   // HELPER METHODS
   // ============================================================================
@@ -216,3 +233,6 @@ class UserProfileService {
         .toUpperCase();
   }
 }
+
+/// Global singleton instance
+final userProfileService = UserProfileService();

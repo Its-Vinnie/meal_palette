@@ -32,39 +32,42 @@ class RecipeDetail {
 
   /// Creates RecipeDetail from JSON data (API/Firestore)
   /// Handles both API response format and Firestore format
-  factory RecipeDetail.fromJson(Map<String, dynamic> json) {
-    // Parse ingredients - handle both API and Firestore formats
+   factory RecipeDetail.fromJson(Map<String, dynamic> json) {
+    //* Safe ID parsing
+    int parseId(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+    
+    // Parse ingredients
     List<Ingredient> ingredients = [];
     if (json['extendedIngredients'] != null) {
-      // API format
       ingredients = (json['extendedIngredients'] as List)
           .map((i) => Ingredient.fromJson(i as Map<String, dynamic>))
           .toList();
     } else if (json['ingredients'] != null) {
-      // Firestore format
       ingredients = (json['ingredients'] as List)
           .map((i) => Ingredient.fromJson(i as Map<String, dynamic>))
           .toList();
     }
 
-    // Parse instructions - handle both API and Firestore formats
+    // Parse instructions
     List<InstructionStep> instructions = [];
     if (json['analyzedInstructions'] != null &&
         (json['analyzedInstructions'] as List).isNotEmpty) {
-      // API format
       final steps = json['analyzedInstructions'][0]['steps'] as List;
       instructions = steps
           .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
           .toList();
     } else if (json['instructions'] != null) {
-      // Firestore format
       instructions = (json['instructions'] as List)
           .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
           .toList();
     }
 
-    return RecipeDetail(
-      id: json['id'] ?? 0,
+     return RecipeDetail(
+      id: parseId(json['id']),
       title: json['title'] ?? 'Unknown Recipe',
       image: json['image'],
       readyInMinutes: json['readyInMinutes'] ?? 0,
@@ -80,10 +83,9 @@ class RecipeDetail {
   }
 
   /// Converts RecipeDetail to Map for Firestore storage
-  /// This method is CRITICAL for saving to Firestore
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      'id': id, // Always store as int
       'title': title,
       'image': image,
       'readyInMinutes': readyInMinutes,
@@ -97,7 +99,6 @@ class RecipeDetail {
       'dairyFree': dairyFree,
     };
   }
-
   /// Converts to JSON (alias for toMap for consistency)
   Map<String, dynamic> toJson() => toMap();
 

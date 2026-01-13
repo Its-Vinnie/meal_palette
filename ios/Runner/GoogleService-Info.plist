@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CLIENT_ID</key>
+	<string>195831940638-3siv9hr9ppkegr32i9cpp285dpu2ib8h.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.195831940638-3siv9hr9ppkegr32i9cpp285dpu2ib8h</string>
 	<key>API_KEY</key>
 	<string>AIzaSyDejCERAwgTsW56k5gvN6SfXzwC5ooxImI</string>
 	<key>GCM_SENDER_ID</key>
@@ -15,15 +19,15 @@
 	<key>STORAGE_BUCKET</key>
 	<string>meal-palette.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
-	<false/>
+	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
-	<false/>
+	<false></false>
 	<key>IS_APPINVITE_ENABLED</key>
-	<true/>
+	<true></true>
 	<key>IS_GCM_ENABLED</key>
-	<true/>
+	<true></true>
 	<key>IS_SIGNIN_ENABLED</key>
-	<true/>
+	<true></true>
 	<key>GOOGLE_APP_ID</key>
 	<string>1:195831940638:ios:a7b3d3d89e3eb62e7a500f</string>
 </dict>

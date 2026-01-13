@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:meal_palette/screen/generation_history_screen.dart';
 import 'package:meal_palette/screen/home_screen.dart';
 import 'package:meal_palette/screen/recipe_search_screen.dart';
-import 'package:meal_palette/screen/favourites_screen.dart';
+import 'package:meal_palette/screen/collections_screen.dart';
 import 'package:meal_palette/screen/profile_screen.dart';
+import 'package:meal_palette/screen/ingredient_input_screen.dart';
+import 'package:meal_palette/screen/create_edit_recipe_screen.dart';
+import 'package:meal_palette/screen/voice_recipe_creation_screen.dart';
+import 'package:meal_palette/screen/url_recipe_import_screen.dart';
+import 'package:meal_palette/screen/manage_groceries_screen.dart';
 import 'package:meal_palette/widgets/custom_bottom_navbar.dart';
 import 'package:meal_palette/theme/theme_design.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class MainAppScreen extends StatefulWidget {
   const MainAppScreen({super.key});
@@ -18,12 +25,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
   // List of screens
   final List<Widget> _screens = [
-    HomeScreen(),
-    RecipeSearchScreen(),
-    FavoritesScreen(),
-    ProfileScreen(),
+    const HomeScreen(),
+    const RecipeSearchScreen(),
+    const CollectionsScreen(),
+    const ProfileScreen(),
   ];
 
+
+ 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -32,8 +41,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
         currentIndex: _currentIndex,
         onTap: (index) {
           if (index == 4) {
-            // Center FAB pressed - Show add recipe options
-            _showAddRecipeModal();
+            // Center FAB pressed - Show ingredient input options
+            _showIngredientInputModal();
           } else {
             // Regular navigation
             setState(() {
@@ -45,17 +54,24 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  void _showAddRecipeModal() {
+  /// Show modal for quick actions
+  void _showIngredientInputModal() {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.surface,
+      isScrollControlled: true,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
       builder: (context) {
         return SingleChildScrollView(
           child: Container(
-            padding: EdgeInsets.all(AppSpacing.xl),
+            padding: EdgeInsets.only(
+              left: AppSpacing.xl,
+              right: AppSpacing.xl,
+              top: AppSpacing.xl,
+              bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -71,58 +87,137 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 SizedBox(height: AppSpacing.xl),
 
                 // Title
-                Text('Add New Recipe', style: AppTextStyles.recipeTitle),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.add_circle_outline,
+                      color: AppColors.primaryAccent,
+                      size: 28,
+                    ),
+                    SizedBox(width: AppSpacing.md),
+                    Text(
+                      'Quick Actions',
+                      style: AppTextStyles.recipeTitle,
+                    ),
+                  ],
+                ),
+                SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Choose what you want to do',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
                 SizedBox(height: AppSpacing.xl),
 
-                // Options
+                // Generate from ingredients
                 _buildModalOption(
-                  icon: Icons.camera_alt_outlined,
-                  title: 'Take Photo',
-                  subtitle: 'Capture a recipe from a book',
+                  icon: Icons.auto_awesome,
+                  title: 'Generate from Ingredients',
+                  subtitle: 'AI-powered recipe suggestions',
+                  color: AppColors.primaryAccent,
                   onTap: () {
                     Navigator.pop(context);
-                    // TODO: Add camera functionality
-                    print('Take photo tapped');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => IngredientInputScreen(),
+                      ),
+                    );
                   },
                 ),
-                SizedBox(height: AppSpacing.md),
+                SizedBox(height: AppSpacing.sm),
 
+                // View generation history
                 _buildModalOption(
-                  icon: Icons.image_outlined,
-                  title: 'Choose from Gallery',
-                  subtitle: 'Select recipe image',
+                  icon: Icons.history,
+                  title: 'View History',
+                  subtitle: 'See your past generations',
+                  color: Color(0xFF9C27B0),
                   onTap: () {
                     Navigator.pop(context);
-                    // TODO: Add gallery functionality
-                    print('Gallery tapped');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => GenerationHistoryScreen(),
+                      ),
+                    );
                   },
                 ),
-                SizedBox(height: AppSpacing.md),
+                SizedBox(height: AppSpacing.sm),
 
+                // Create custom recipe
                 _buildModalOption(
-                  icon: Icons.edit_outlined,
-                  title: 'Manual Entry',
+                  icon: Icons.edit_note,
+                  title: 'Create a Recipe',
                   subtitle: 'Write your own recipe',
+                  color: Color(0xFF00BCD4),
                   onTap: () {
                     Navigator.pop(context);
-                    // TODO: Navigate to add recipe form
-                    print('Manual entry tapped');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => CreateEditRecipeScreen(),
+                      ),
+                    );
                   },
                 ),
-                SizedBox(height: AppSpacing.md),
+                SizedBox(height: AppSpacing.sm),
 
+                // Voice recipe creation
                 _buildModalOption(
-                  icon: Icons.link_outlined,
-                  title: 'Import from URL',
-                  subtitle: 'Paste a recipe link',
+                  icon: Icons.mic,
+                  title: 'Voice Recipe Creation',
+                  subtitle: 'Create recipe with AI voice assistant',
+                  color: Color(0xFFE91E63),
                   onTap: () {
                     Navigator.pop(context);
-                    // TODO: Add URL import functionality
-                    print('Import URL tapped');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => VoiceRecipeCreationScreen(),
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(height: AppSpacing.sm),
+
+                // Import from URL
+                _buildModalOption(
+                  icon: Icons.link,
+                  title: 'Import from URL',
+                  subtitle: 'Extract recipe from website',
+                  color: Color(0xFFFF9800),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => UrlRecipeImportScreen(),
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(height: AppSpacing.sm),
+
+                // Manage groceries
+                _buildModalOption(
+                  icon: Icons.shopping_basket_outlined,
+                  title: 'Manage Groceries',
+                  subtitle: 'Add or view your grocery list',
+                  color: Color(0xFF4CAF50),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ManageGroceriesScreen(),
+                      ),
+                    );
                   },
                 ),
 
-                SizedBox(height: AppSpacing.xl),
+                SizedBox(height: AppSpacing.lg),
               ],
             ),
           ),
@@ -135,6 +230,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     required IconData icon,
     required String title,
     required String subtitle,
+    required Color color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -144,18 +240,29 @@ class _MainAppScreenState extends State<MainAppScreen> {
         decoration: BoxDecoration(
           color: AppColors.background,
           borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(
+            color: color.withOpacity(0.3),
+            width: 2,
+          ),
         ),
         child: Row(
           children: [
             // Icon container
             Container(
-              width: 48,
-              height: 48,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                color: AppColors.primaryAccent.withOpacity(0.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    color,
+                    color.withOpacity(0.7),
+                  ],
+                ),
                 borderRadius: BorderRadius.circular(AppRadius.md),
               ),
-              child: Icon(icon, color: AppColors.primaryAccent, size: 24),
+              child: Icon(icon, color: AppColors.textPrimary, size: 28),
             ),
             SizedBox(width: AppSpacing.lg),
 
@@ -184,8 +291,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
             // Arrow
             Icon(
               Icons.arrow_forward_ios,
-              color: AppColors.textTertiary,
-              size: 16,
+              color: color,
+              size: 20,
             ),
           ],
         ),

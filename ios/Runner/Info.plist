@@ -8,6 +8,19 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Meal Palette</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>URL</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.url</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -29,14 +42,34 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.com.technologies</string>
+				<string>com.googleusercontent.apps.195831940638-3siv9hr9ppkegr32i9cpp285dpu2ib8h</string>
+				<string>http</string>
+				<string>https</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSApplicationCategoryType</key>
+	<string></string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>http</string>
+		<string>https</string>
+		<string>tiktok</string>
+		<string>instagram</string>
+		<string>fb</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>We need camera access to scan your ingredients</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>meal palette uses your microphone to understand your commands</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We need photo library access to select ingredient images</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Meal palette uses this to understand your cooking commands</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

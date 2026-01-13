@@ -16,10 +16,17 @@ class Recipe {
   });
 
   /// Creates a Recipe object from JSON data
-  /// Used when receiving data from API or Firestore
+  /// UPDATED: Safe ID parsing
   factory Recipe.fromJson(Map<String, dynamic> json) {
+    //* Safe ID parsing - handles both int and String
+    int parseId(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+    
     return Recipe(
-      id: json['id'] ?? 0,
+      id: parseId(json['id']),
       title: json['title'] ?? 'Unknown Recipe',
       image: json['image'],
       readyInMinutes: json['readyInMinutes'],
@@ -29,10 +36,9 @@ class Recipe {
   }
 
   /// Converts Recipe object to Map for Firestore storage
-  /// This is crucial for saving to Firebase
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      'id': id, // Always store as int
       'title': title,
       'image': image,
       'readyInMinutes': readyInMinutes,

@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:meal_palette/model/voice_settings_model.dart';
+import 'package:meal_palette/model/user_preferences_model.dart';
 
 /// User Model for storing user profile data in Firestore
 /// This complements Firebase Authentication User
@@ -8,6 +10,8 @@ class UserProfile {
   final String displayName;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final VoiceSettings? voiceSettings;
+  final UserPreferences? preferences;
 
   UserProfile({
     required this.uid,
@@ -15,6 +19,8 @@ class UserProfile {
     required this.displayName,
     required this.createdAt,
     this.updatedAt,
+    this.voiceSettings,
+    this.preferences,
   });
 
   /// Creates UserProfile from Firestore document
@@ -25,8 +31,14 @@ class UserProfile {
       email: json['email'] ?? '',
       displayName: json['displayName'] ?? 'User',
       createdAt: _parseDateTime(json['createdAt']),
-      updatedAt: json['updatedAt'] != null 
+      updatedAt: json['updatedAt'] != null
           ? _parseDateTime(json['updatedAt'])
+          : null,
+      voiceSettings: json['voiceSettings'] != null
+          ? VoiceSettings.fromJson(json['voiceSettings'] as Map<String, dynamic>)
+          : null,
+      preferences: json['preferences'] != null
+          ? UserPreferences.fromJson(json['preferences'] as Map<String, dynamic>)
           : null,
     );
   }
@@ -69,6 +81,8 @@ class UserProfile {
       'displayName': displayName,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
+      if (voiceSettings != null) 'voiceSettings': voiceSettings!.toJson(),
+      if (preferences != null) 'preferences': preferences!.toJson(),
     };
   }
 
@@ -79,6 +93,8 @@ class UserProfile {
     String? displayName,
     DateTime? createdAt,
     DateTime? updatedAt,
+    VoiceSettings? voiceSettings,
+    UserPreferences? preferences,
   }) {
     return UserProfile(
       uid: uid ?? this.uid,
@@ -86,6 +102,8 @@ class UserProfile {
       displayName: displayName ?? this.displayName,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      voiceSettings: voiceSettings ?? this.voiceSettings,
+      preferences: preferences ?? this.preferences,
     );
   }
 
