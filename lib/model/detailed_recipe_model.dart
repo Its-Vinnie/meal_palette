@@ -1,6 +1,51 @@
 import 'package:meal_palette/model/ingredient_model.dart';
 import 'package:meal_palette/model/instruction_step_model.dart';
 
+/// Helper function to parse HTML instructions into InstructionStep list
+List<InstructionStep> _parseHtmlInstructions(String html) {
+  final List<InstructionStep> steps = [];
+
+  // Remove HTML tags and split by common delimiters
+  String cleanText = html
+      .replaceAll(RegExp(r'<br\s*/?>'), '\n')
+      .replaceAll(RegExp(r'<li[^>]*>'), '\n')
+      .replaceAll(RegExp(r'</li>'), '')
+      .replaceAll(RegExp(r'<ol[^>]*>'), '')
+      .replaceAll(RegExp(r'</ol>'), '')
+      .replaceAll(RegExp(r'<ul[^>]*>'), '')
+      .replaceAll(RegExp(r'</ul>'), '')
+      .replaceAll(RegExp(r'<p[^>]*>'), '\n')
+      .replaceAll(RegExp(r'</p>'), '')
+      .replaceAll(RegExp(r'<[^>]+>'), '') // Remove remaining HTML tags
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"');
+
+  // Split by newlines and numbered patterns
+  final lines = cleanText
+      .split(RegExp(r'\n+'))
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty && line.length > 3)
+      .toList();
+
+  int stepNumber = 1;
+  for (final line in lines) {
+    // Remove leading numbers/bullets if present
+    String stepText = line.replaceFirst(RegExp(r'^[\d]+[\.\)]\s*'), '').trim();
+    if (stepText.isNotEmpty) {
+      steps.add(InstructionStep(
+        number: stepNumber,
+        step: stepText,
+      ));
+      stepNumber++;
+    }
+  }
+
+  return steps;
+}
+
 class RecipeDetail {
   final int id;
   final String title;
@@ -55,15 +100,28 @@ class RecipeDetail {
     // Parse instructions
     List<InstructionStep> instructions = [];
     if (json['analyzedInstructions'] != null &&
+        json['analyzedInstructions'] is List &&
         (json['analyzedInstructions'] as List).isNotEmpty) {
-      final steps = json['analyzedInstructions'][0]['steps'] as List;
-      instructions = steps
-          .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
-          .toList();
+      final firstInstruction = json['analyzedInstructions'][0];
+      if (firstInstruction is Map && firstInstruction['steps'] != null) {
+        final steps = firstInstruction['steps'] as List;
+        instructions = steps
+            .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
+            .toList();
+      }
     } else if (json['instructions'] != null) {
-      instructions = (json['instructions'] as List)
-          .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
-          .toList();
+      // Handle instructions - can be List or String (HTML)
+      if (json['instructions'] is List) {
+        instructions = (json['instructions'] as List)
+            .map((s) => InstructionStep.fromJson(s as Map<String, dynamic>))
+            .toList();
+      } else if (json['instructions'] is String) {
+        // Parse HTML instructions into steps
+        final htmlInstructions = json['instructions'] as String;
+        if (htmlInstructions.isNotEmpty) {
+          instructions = _parseHtmlInstructions(htmlInstructions);
+        }
+      }
     }
 
      return RecipeDetail(

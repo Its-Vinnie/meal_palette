@@ -1,26 +1,22 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 import 'package:meal_palette/model/cook_along_session.dart';
 import 'package:meal_palette/model/voice_settings_model.dart';
 import 'package:meal_palette/service/claude_conversation_service.dart';
 import 'package:meal_palette/service/elevenlabs_service.dart';
-import 'package:meal_palette/service/whisper_service.dart';
 
 /// Service for managing Cook Along Mode functionality
-/// Handles Text-to-Speech, Speech-to-Text (via Whisper), and timer management
+/// Handles Text-to-Speech, Speech-to-Text (built-in), and timer management
+/// Implements hands-free continuous listening like ChatGPT voice mode
 class CookAlongService {
   final FlutterTts _tts = FlutterTts();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final ClaudeConversationService _claudeService = ClaudeConversationService();
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final WhisperService _whisperService = whisperService;
-  final AudioRecorder _audioRecorder = AudioRecorder();
 
   bool _isTtsInitialized = false;
   bool _isSpeechInitialized = false;
@@ -28,8 +24,15 @@ class CookAlongService {
   bool _isSpeaking = false;
   bool _useNaturalVoice = true; // Enable Claude-enhanced natural speech by default
   bool _continuousListeningEnabled = false;
-  bool _useWhisper = true; // Use Whisper API for better accuracy
-  String? _currentRecordingPath;
+
+  // Hands-free listening state
+  bool _handsFreeModeActive = false;
+  Timer? _silenceTimer;
+  Timer? _restartListeningTimer;
+  String _accumulatedText = '';
+  Function(String)? _handsFreeonResult; // Store callback for restarting
+  static const Duration _silenceThreshold = Duration(milliseconds: 1500);
+  static const Duration _restartDelay = Duration(milliseconds: 800); // Longer delay for stability
 
   // Command debouncing
   String? _lastProcessedCommand;
@@ -45,6 +48,12 @@ class CookAlongService {
   Function(VoiceCommand)? onVoiceCommand;
   Function()? onTtsComplete;
   Function()? onSpeakingDone; // Called when AI is done speaking
+  Function(double)? onAudioLevelChange; // Audio level for animation sync (0.0 to 1.0)
+
+  // TTS audio level simulation
+  Timer? _ttsAudioLevelTimer;
+  double _simulatedAudioLevel = 0.0;
+  Completer<void>? _ttsCompleter; // To properly await TTS completion
 
   // Timer streams
   final Map<String, StreamController<Duration>> _timerControllers = {};
@@ -55,14 +64,7 @@ class CookAlongService {
   // Getters
   bool get isSpeaking => _isSpeaking;
   bool get continuousListeningEnabled => _continuousListeningEnabled;
-  bool get useWhisper => _useWhisper;
-
-  /// Enable or disable Whisper (OpenAI) for speech recognition
-  /// Whisper provides better accuracy but requires API calls
-  void setUseWhisper(bool value) {
-    _useWhisper = value;
-    print('Whisper speech recognition: ${value ? 'enabled' : 'disabled'}');
-  }
+  bool get handsFreeModeActive => _handsFreeModeActive;
 
   CookAlongService() {
     _initializeTts();
@@ -108,17 +110,20 @@ Future<bool> requestPermissions() async {
       // Set completion handler
       _tts.setCompletionHandler(() {
         print('🔊 TTS completed');
+        _stopAudioLevelSimulation();
         _isSpeaking = false;
+
+        // Complete the TTS completer if waiting
+        if (_ttsCompleter != null && !_ttsCompleter!.isCompleted) {
+          _ttsCompleter!.complete();
+        }
+
         onTtsComplete?.call();
         onSpeakingDone?.call();
 
-        // Auto-restart listening in continuous mode
-        if (_continuousListeningEnabled && !_isListening) {
-          Future.delayed(const Duration(milliseconds: 300), () {
-            if (_continuousListeningEnabled && !_isListening) {
-              _startContinuousListening();
-            }
-          });
+        // Auto-restart hands-free listening after speaking
+        if (_handsFreeModeActive || _continuousListeningEnabled) {
+          resumeHandsFreeListening();
         }
       });
 
@@ -126,12 +131,19 @@ Future<bool> requestPermissions() async {
       _tts.setStartHandler(() {
         print('🔊 TTS started speaking');
         _isSpeaking = true;
+        _startAudioLevelSimulation();
       });
 
       // Set error handler
       _tts.setErrorHandler((msg) {
         print('❌ TTS error: $msg');
+        _stopAudioLevelSimulation();
         _isSpeaking = false;
+
+        // Complete with error
+        if (_ttsCompleter != null && !_ttsCompleter!.isCompleted) {
+          _ttsCompleter!.complete();
+        }
       });
 
       _isTtsInitialized = true;
@@ -194,9 +206,22 @@ Future<bool> requestPermissions() async {
       onError: (error) {
         print('❌ Speech recognition error: ${error.errorMsg}');
         print('❌ Error type: ${error.runtimeType}');
+
+        // Handle errors by restarting hands-free listening if active
+        // error_no_match means no speech was detected - this is normal, just restart
+        if (_handsFreeModeActive && !_isSpeaking) {
+          _isListening = false;
+          _scheduleHandsFreeRestart();
+        }
       },
       onStatus: (status) {
         print('🎤 Speech status: $status');
+
+        // When speech recognition stops (done/notListening), restart if in hands-free mode
+        if ((status == 'done' || status == 'notListening') &&
+            _handsFreeModeActive && !_isSpeaking && !_isListening) {
+          _scheduleHandsFreeRestart();
+        }
       },
     );
 
@@ -335,6 +360,68 @@ Convert the text above following these rules:''';
     }
   }
 
+  /// Start simulating audio levels during TTS playback
+  /// This creates realistic-looking audio visualization since TTS doesn't provide real levels
+  void _startAudioLevelSimulation() {
+    _stopAudioLevelSimulation(); // Clean up any existing timer
+
+    int tickCount = 0;
+    _ttsAudioLevelTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      tickCount++;
+
+      // Create natural-looking speech patterns with varying amplitudes
+      // Simulate speech rhythm: louder during "words", quieter during "pauses"
+      final baseLevel = 0.3;
+
+      // Use multiple sine waves at different frequencies for natural variation
+      final wave1 = math.sin(tickCount * 0.3) * 0.3;  // Slow wave for overall rhythm
+      final wave2 = math.sin(tickCount * 0.8) * 0.2;  // Medium wave for word patterns
+      final wave3 = math.sin(tickCount * 2.1) * 0.15; // Fast wave for syllables
+      final randomNoise = (math.Random().nextDouble() - 0.5) * 0.1; // Small random variation
+
+      _simulatedAudioLevel = (baseLevel + wave1 + wave2 + wave3 + randomNoise)
+          .clamp(0.1, 1.0);
+
+      // Notify listeners of the simulated audio level
+      onAudioLevelChange?.call(_simulatedAudioLevel);
+    });
+
+    print('🎵 Started TTS audio level simulation');
+  }
+
+  /// Stop the audio level simulation
+  void _stopAudioLevelSimulation() {
+    _ttsAudioLevelTimer?.cancel();
+    _ttsAudioLevelTimer = null;
+    _simulatedAudioLevel = 0.0;
+    onAudioLevelChange?.call(0.0);
+  }
+
+  /// Speak text and wait for completion
+  /// Returns a Future that completes when TTS finishes speaking
+  Future<void> speakAndWait(String text, {bool interrupt = false, bool useNatural = true}) async {
+    _ttsCompleter = Completer<void>();
+
+    await speak(text, interrupt: interrupt, useNatural: useNatural);
+
+    // Wait for TTS to complete (completion handler will complete the completer)
+    // Add a timeout as safety net
+    try {
+      await _ttsCompleter!.future.timeout(
+        Duration(seconds: (text.length / 10).ceil() + 10), // Rough estimate + buffer
+        onTimeout: () {
+          print('⚠️ TTS completion timeout - continuing');
+          _stopAudioLevelSimulation();
+        },
+      );
+    } catch (e) {
+      print('⚠️ TTS wait error: $e');
+      _stopAudioLevelSimulation();
+    }
+
+    _ttsCompleter = null;
+  }
+
   /// Get all available voices from the platform
   Future<List<AvailableVoice>> getAvailableVoices() async {
     if (_availableVoices.isNotEmpty) {
@@ -424,29 +511,37 @@ Convert the text above following these rules:''';
     await _tts.setVolume(_currentSettings.volume);
   }
 
-  /// Enable continuous listening mode (like a real conversation)
+  /// Enable continuous hands-free listening mode (like ChatGPT voice mode)
+  /// When enabled, the system will automatically listen and process speech
+  /// without requiring the user to tap to send
   void enableContinuousListening(bool enable) {
     _continuousListeningEnabled = enable;
     print('🎤 Continuous listening: ${enable ? 'enabled' : 'disabled'}');
 
-    if (enable && !_isListening && !_isSpeaking) {
+    if (enable && !_handsFreeModeActive && !_isSpeaking) {
       _startContinuousListening();
     } else if (!enable) {
-      stopListening();
+      stopHandsFreeListening();
     }
   }
 
-  /// Start continuous listening (internal)
+  /// Start continuous hands-free listening (internal)
   Future<void> _startContinuousListening() async {
-    if (_isListening || _isSpeaking) return;
+    if (_handsFreeModeActive || _isSpeaking) return;
 
     try {
-      await startListening(
-        timeout: const Duration(seconds: 30),
-        continuous: true,
-      );
+      await startHandsFreeListening();
     } catch (e) {
       print('❌ Error starting continuous listening: $e');
+    }
+  }
+
+  /// Resume hands-free listening after TTS completes
+  /// Call this after AI finishes speaking to restart listening
+  void resumeHandsFreeListening() {
+    if (_handsFreeModeActive && !_isSpeaking) {
+      print('🔄 Resuming hands-free listening after TTS...');
+      _scheduleHandsFreeRestart();
     }
   }
 
@@ -468,14 +563,185 @@ Convert the text above following these rules:''';
     return true;
   }
 
-  /// Start listening for voice commands
-  /// Uses Whisper API when _useWhisper is true for better accuracy
+  /// Start hands-free listening mode
+  /// This mode automatically detects silence and processes speech,
+  /// then resumes listening - no need to tap to send
+  Future<void> startHandsFreeListening({
+    Function(String)? onResult,
+  }) async {
+    if (_isSpeaking) {
+      print('Cannot start listening while speaking');
+      return;
+    }
+
+    if (_handsFreeModeActive) {
+      print('Hands-free mode already active');
+      return;
+    }
+
+    _handsFreeModeActive = true;
+    _handsFreeonResult = onResult; // Store callback for restarts
+    _accumulatedText = '';
+    print('🎤 Hands-free listening mode activated');
+
+    await _startHandsFreeSession(onResult: onResult);
+  }
+
+  /// Stop hands-free listening mode
+  Future<void> stopHandsFreeListening() async {
+    _handsFreeModeActive = false;
+    _handsFreeonResult = null;
+    _silenceTimer?.cancel();
+    _restartListeningTimer?.cancel();
+    _silenceTimer = null;
+    _restartListeningTimer = null;
+    _accumulatedText = '';
+    await _speech.stop();
+    _isListening = false;
+    print('🔇 Hands-free listening mode deactivated');
+  }
+
+  /// Schedule a hands-free listening restart after a delay
+  void _scheduleHandsFreeRestart() {
+    _restartListeningTimer?.cancel();
+    _restartListeningTimer = Timer(_restartDelay, () {
+      if (_handsFreeModeActive && !_isListening && !_isSpeaking) {
+        print('🔄 Restarting hands-free listening...');
+        _startHandsFreeSession(onResult: _handsFreeonResult);
+      }
+    });
+  }
+
+  /// Internal method to start a hands-free listening session
+  Future<void> _startHandsFreeSession({
+    Function(String)? onResult,
+  }) async {
+    if (!_handsFreeModeActive || _isSpeaking) {
+      print('🎤 Cannot start session: handsFreeModeActive=$_handsFreeModeActive, isSpeaking=$_isSpeaking');
+      return;
+    }
+
+    // Cancel any pending restart
+    _restartListeningTimer?.cancel();
+
+    if (!_isSpeechInitialized) {
+      final initialized = await initializeSpeech();
+      if (!initialized) {
+        print('Cannot start listening: speech recognition not available');
+        _handsFreeModeActive = false;
+        throw Exception('Speech recognition not available. Please check permissions.');
+      }
+    }
+
+    // Make sure speech is stopped before starting a new session
+    try {
+      await _speech.stop();
+    } catch (e) {
+      // Ignore stop errors
+    }
+
+    // Small delay to ensure clean state
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (!_handsFreeModeActive || _isSpeaking) return; // Check again after delay
+
+    try {
+      _isListening = true;
+      _accumulatedText = '';
+      print('🎤 Starting hands-free listening session...');
+
+      await _speech.listen(
+        onResult: (result) {
+          final recognizedText = result.recognizedWords.trim();
+
+          if (recognizedText.isNotEmpty) {
+            _accumulatedText = recognizedText;
+            onRecognizedText?.call(recognizedText);
+
+            // Reset silence timer on new speech
+            _silenceTimer?.cancel();
+
+            if (result.finalResult) {
+              // Speech ended, process after a short delay to ensure we got everything
+              _silenceTimer = Timer(_silenceThreshold, () {
+                if (_accumulatedText.isNotEmpty && _handsFreeModeActive) {
+                  _processHandsFreeResult(_accumulatedText, onResult: onResult);
+                }
+              });
+            }
+          }
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3), // Longer pause to detect end of speech
+        listenOptions: stt.SpeechListenOptions(
+          cancelOnError: false,
+          listenMode: stt.ListenMode.dictation,
+        ),
+        onSoundLevelChange: (level) {
+          // Normalize level (typically -2 to 10 dB range) to 0-1
+          final normalized = ((level + 2) / 12).clamp(0.0, 1.0);
+          onAudioLevelChange?.call(normalized);
+        },
+      );
+
+      // Note: _speech.listen returns immediately. The actual listening happens async.
+      // Errors and completion are handled via the onError and onStatus callbacks
+      // set up in initializeSpeech()
+
+    } catch (e, stackTrace) {
+      print('Error in hands-free listening: $e');
+      print('Stack trace: $stackTrace');
+      _isListening = false;
+
+      // Try to restart if hands-free mode is still active
+      if (_handsFreeModeActive && !_isSpeaking) {
+        _scheduleHandsFreeRestart();
+      }
+    }
+  }
+
+  /// Process the result from hands-free listening
+  void _processHandsFreeResult(String text, {Function(String)? onResult}) async {
+    if (text.isEmpty) return;
+
+    final lowerText = text.toLowerCase();
+    print('🎤 Processing hands-free result: $lowerText');
+
+    // Stop current listening session
+    try {
+      await _speech.stop();
+    } catch (e) {
+      // Ignore stop errors
+    }
+    _isListening = false;
+
+    // Notify callbacks
+    onResult?.call(lowerText);
+
+    // Parse voice command
+    final command = _parseVoiceCommand(lowerText);
+    if (command != VoiceCommand.unknown) {
+      if (_shouldProcessCommand(command.toString())) {
+        print('📢 Processing command: $command');
+        onVoiceCommand?.call(command);
+      }
+    }
+
+    // Clear accumulated text
+    _accumulatedText = '';
+
+    // Note: Restart will be triggered automatically after TTS completes
+    // via the TTS completion handler -> resumeHandsFreeListening()
+    // If no TTS happens, the onStatus callback will trigger restart
+  }
+
+  /// Start listening for voice commands (legacy method for compatibility)
   Future<void> startListening({
     Function(String)? onResult,
     Duration? timeout,
     bool continuous = false,
   }) async {
-    print('startListening called, useWhisper: $_useWhisper');
+    print('startListening called');
 
     // Don't start listening while speaking
     if (_isSpeaking) {
@@ -488,149 +754,19 @@ Convert the text above following these rules:''';
       return;
     }
 
-    // Use Whisper API for better accuracy if enabled and configured
-    if (_useWhisper && WhisperService.isConfigured) {
-      await _startWhisperListening(onResult: onResult, timeout: timeout, continuous: continuous);
-    } else {
-      await _startNativeListening(onResult: onResult, timeout: timeout, continuous: continuous);
+    // If continuous mode is requested, use hands-free mode
+    if (continuous || _continuousListeningEnabled) {
+      await startHandsFreeListening(onResult: onResult);
+      return;
     }
+
+    await _startSingleListening(onResult: onResult, timeout: timeout);
   }
 
-  /// Start listening using OpenAI Whisper API (better accuracy)
-  Future<void> _startWhisperListening({
+  /// Start a single listening session (non-continuous)
+  Future<void> _startSingleListening({
     Function(String)? onResult,
     Duration? timeout,
-    bool continuous = false,
-  }) async {
-    try {
-      // Check if recorder is available
-      if (!await _audioRecorder.hasPermission()) {
-        print('Microphone permission not granted');
-        throw Exception('Microphone permission required');
-      }
-
-      _isListening = true;
-      print('Started Whisper listening...');
-
-      // Get temp directory for recording
-      final tempDir = await getTemporaryDirectory();
-      _currentRecordingPath = '${tempDir.path}/whisper_recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
-
-      // Start recording
-      await _audioRecorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 128000,
-          sampleRate: 44100,
-        ),
-        path: _currentRecordingPath!,
-      );
-
-      print('Recording started at: $_currentRecordingPath');
-
-      // Auto-stop after timeout
-      final listenDuration = timeout ?? const Duration(seconds: 10);
-      Future.delayed(listenDuration, () async {
-        if (_isListening && _currentRecordingPath != null) {
-          await _stopWhisperRecordingAndTranscribe(onResult: onResult, continuous: continuous);
-        }
-      });
-    } catch (e, stackTrace) {
-      print('Error starting Whisper listening: $e');
-      print('Stack trace: $stackTrace');
-      _isListening = false;
-      rethrow;
-    }
-  }
-
-  /// Stop Whisper recording and transcribe
-  Future<void> _stopWhisperRecordingAndTranscribe({
-    Function(String)? onResult,
-    bool continuous = false,
-  }) async {
-    if (!_isListening || _currentRecordingPath == null) return;
-
-    try {
-      // Stop recording
-      final path = await _audioRecorder.stop();
-      print('Recording stopped at: $path');
-
-      if (path == null) {
-        print('No recording path returned');
-        _isListening = false;
-        return;
-      }
-
-      // Check if file exists and has content
-      final file = File(path);
-      if (!await file.exists()) {
-        print('Recording file does not exist');
-        _isListening = false;
-        return;
-      }
-
-      final fileSize = await file.length();
-      if (fileSize < 1000) {
-        print('Recording too short (${fileSize} bytes)');
-        _isListening = false;
-        return;
-      }
-
-      print('Transcribing ${fileSize} bytes with Whisper...');
-
-      // Transcribe with Whisper
-      final transcription = await _whisperService.transcribe(path, language: 'en');
-      final recognizedText = transcription.toLowerCase().trim();
-
-      // Clean up recording file
-      try {
-        await file.delete();
-      } catch (e) {
-        print('Could not delete recording file: $e');
-      }
-
-      _isListening = false;
-      _currentRecordingPath = null;
-
-      if (recognizedText.isEmpty) {
-        print('Empty transcription');
-        return;
-      }
-
-      print('Whisper transcribed: $recognizedText');
-      onRecognizedText?.call(recognizedText);
-      onResult?.call(recognizedText);
-
-      // Parse voice command
-      final command = _parseVoiceCommand(recognizedText);
-      if (command != VoiceCommand.unknown) {
-        if (_shouldProcessCommand(command.toString())) {
-          print('Processing command: $command');
-          onVoiceCommand?.call(command);
-        }
-      }
-
-      // Restart listening in continuous mode
-      if (continuous && _continuousListeningEnabled && !_isSpeaking) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (_continuousListeningEnabled && !_isListening && !_isSpeaking) {
-            _startContinuousListening();
-          }
-        });
-      }
-    } catch (e, stackTrace) {
-      print('Error in Whisper transcription: $e');
-      print('Stack trace: $stackTrace');
-      _isListening = false;
-      _currentRecordingPath = null;
-    }
-  }
-
-  /// Start listening using native speech-to-text (fallback)
-  Future<void> _startNativeListening({
-    Function(String)? onResult,
-    Duration? timeout,
-    bool continuous = false,
   }) async {
     if (!_isSpeechInitialized) {
       print('Speech not initialized, attempting initialization...');
@@ -641,88 +777,62 @@ Convert the text above following these rules:''';
       }
     }
 
-    // Double-check speech recognition is actually available
-    final available = await _speech.initialize();
-    if (!available) {
-      print('Speech recognition not available on this device');
-      throw Exception('Speech recognition not available on this device');
-    }
-
     try {
       _isListening = true;
-      print('Started native listening (continuous: $continuous)...');
+      print('🎤 Started single listening session...');
 
       await _speech.listen(
         onResult: (result) {
           final recognizedText = result.recognizedWords.toLowerCase().trim();
 
-          // Only process final results to avoid duplicates
-          if (!result.finalResult) {
-            // Still show partial results for UI feedback
-            onRecognizedText?.call(recognizedText);
-            return;
-          }
+          // Show partial results for UI feedback
+          onRecognizedText?.call(recognizedText);
 
+          // Only process final results
+          if (!result.finalResult) return;
           if (recognizedText.isEmpty) return;
 
-          print('Native recognized: $recognizedText');
-          onRecognizedText?.call(recognizedText);
+          print('Recognized: $recognizedText');
           onResult?.call(recognizedText);
 
           // Parse voice command
           final command = _parseVoiceCommand(recognizedText);
           if (command != VoiceCommand.unknown) {
-            // Debounce duplicate commands
             if (_shouldProcessCommand(command.toString())) {
               print('Processing command: $command');
               onVoiceCommand?.call(command);
             }
-
-            // Stop listening, AI will respond and then restart listening
-            stopListening();
           }
         },
         listenFor: timeout ?? const Duration(seconds: 10),
-        pauseFor: const Duration(seconds: 3),
+        pauseFor: const Duration(seconds: 2),
         listenOptions: stt.SpeechListenOptions(
           cancelOnError: false,
           listenMode: stt.ListenMode.dictation,
         ),
         onSoundLevelChange: (level) {
-          // Can be used for voice wave animation
+          final normalized = ((level + 2) / 12).clamp(0.0, 1.0);
+          onAudioLevelChange?.call(normalized);
         },
       );
     } catch (e, stackTrace) {
-      print('Error starting native listening: $e');
+      print('Error starting listening: $e');
       print('Stack trace: $stackTrace');
       _isListening = false;
-
-      // Retry in continuous mode
-      if (continuous && _continuousListeningEnabled) {
-        Future.delayed(const Duration(seconds: 1), () {
-          if (_continuousListeningEnabled && !_isListening && !_isSpeaking) {
-            _startContinuousListening();
-          }
-        });
-      } else {
-        rethrow;
-      }
+      rethrow;
     }
   }
 
   /// Stop listening for voice commands
   Future<void> stopListening() async {
-    if (!_isListening) return;
+    _silenceTimer?.cancel();
+    _restartListeningTimer?.cancel();
+
+    if (!_isListening && !_handsFreeModeActive) return;
 
     try {
-      if (_useWhisper && _currentRecordingPath != null) {
-        // Stop Whisper recording and transcribe
-        await _stopWhisperRecordingAndTranscribe();
-      } else {
-        // Stop native speech recognition
-        await _speech.stop();
-        _isListening = false;
-      }
+      await _speech.stop();
+      _isListening = false;
       print('Stopped listening');
     } catch (e) {
       print('Error stopping listening: $e');
@@ -925,7 +1035,11 @@ Convert the text above following these rules:''';
   void dispose() {
     _tts.stop();
     _speech.stop();
+    _silenceTimer?.cancel();
+    _restartListeningTimer?.cancel();
+    _ttsAudioLevelTimer?.cancel();
     cancelAllTimers();
+    _handsFreeModeActive = false;
   }
 }
 

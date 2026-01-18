@@ -8,6 +8,12 @@ import 'package:meal_palette/service/claude_conversation_service.dart';
 import 'package:meal_palette/service/user_profile_service.dart';
 import 'package:meal_palette/service/auth_service.dart';
 
+/// Cook Along interaction mode
+enum CookAlongMode {
+  manual,  // Traditional button-based navigation
+  voice,   // Voice command navigation with AI assistant
+}
+
 /// State management for Cook Along Mode
 class CookAlongState extends ChangeNotifier {
   static CookAlongState? _instance;
@@ -20,6 +26,12 @@ class CookAlongState extends ChangeNotifier {
   bool _isProcessingQuestion = false;
   bool _isProcessingCommand = false;
   bool _hasStartedCooking = false;
+
+  // Mode toggle - voice or manual
+  CookAlongMode _mode = CookAlongMode.voice;
+
+  // Audio level for voice animation sync (0.0 to 1.0)
+  double _audioLevel = 0.0;
 
   // Callback for exit request
   Function()? onExitRequested;
@@ -42,6 +54,10 @@ class CookAlongState extends ChangeNotifier {
   String? get currentQuestion => _currentQuestion;
   bool get isProcessingQuestion => _isProcessingQuestion;
   bool get hasStartedCooking => _hasStartedCooking;
+  CookAlongMode get mode => _mode;
+  double get audioLevel => _audioLevel;
+  bool get isVoiceMode => _mode == CookAlongMode.voice;
+  bool get isManualMode => _mode == CookAlongMode.manual;
 
   InstructionStep? get currentStep => _session?.currentStep;
   int get currentStepIndex => _session?.currentStepIndex ?? 0;
@@ -51,8 +67,37 @@ class CookAlongState extends ChangeNotifier {
   List<ChatMessage> get conversationHistory =>
       _session?.conversationHistory ?? [];
 
+  /// Switch between voice and manual mode
+  void switchMode(CookAlongMode newMode) {
+    if (_mode == newMode) return;
+
+    _mode = newMode;
+    print('🔄 Switched to ${newMode == CookAlongMode.voice ? "voice" : "manual"} mode');
+
+    if (newMode == CookAlongMode.manual) {
+      // Stop voice features when switching to manual
+      cookAlongService.stopHandsFreeListening();
+      _isListening = false;
+    } else {
+      // Enable hands-free voice features when switching to voice mode
+      if (_hasStartedCooking) {
+        cookAlongService.startHandsFreeListening();
+        _isListening = true;
+      }
+    }
+
+    notifyListeners();
+  }
+
+  /// Update audio level for voice animation sync
+  void updateAudioLevel(double level) {
+    _audioLevel = level.clamp(0.0, 1.0);
+    notifyListeners();
+  }
+
   /// Start a new Cook Along session
-  Future<void> startSession(RecipeDetail recipe) async {
+  Future<void> startSession(RecipeDetail recipe, {CookAlongMode initialMode = CookAlongMode.voice}) async {
+    _mode = initialMode;
     try {
       print('🎬 Starting Cook Along session for: ${recipe.title}');
 
@@ -86,6 +131,19 @@ class CookAlongState extends ChangeNotifier {
       cookAlongService.onVoiceCommand = _handleVoiceCommand;
       cookAlongService.onRecognizedText = (text) {
         print('🎤 Voice input: $text');
+        // Sync listening state with service
+        if (cookAlongService.handsFreeModeActive && !_isListening) {
+          _isListening = true;
+          notifyListeners();
+        }
+      };
+
+      // Set up audio level callback for animation sync
+      cookAlongService.onAudioLevelChange = (level) {
+        _audioLevel = level.clamp(0.0, 1.0);
+        // Also sync listening state
+        _isListening = cookAlongService.handsFreeModeActive || cookAlongService.isListening;
+        notifyListeners();
       };
 
       // Speak welcome message
@@ -98,11 +156,14 @@ class CookAlongState extends ChangeNotifier {
         role: ChatMessageRole.assistant,
       );
 
-      // Enable continuous listening after welcome message
-      cookAlongService.enableContinuousListening(true);
+      // Enable hands-free listening after welcome message (only in voice mode)
+      if (_mode == CookAlongMode.voice) {
+        await cookAlongService.startHandsFreeListening();
+        _isListening = true;
+      }
 
       notifyListeners();
-      print('✅ Cook Along session started with continuous listening');
+      print('✅ Cook Along session started with hands-free listening');
     } catch (e) {
       print('❌ Error starting session: $e');
       rethrow;
@@ -305,10 +366,9 @@ class CookAlongState extends ChangeNotifier {
   void endSession() {
     print('🛑 Ending session');
 
-    // Disable continuous listening first
-    cookAlongService.enableContinuousListening(false);
+    // Stop hands-free listening and all voice features
+    cookAlongService.stopHandsFreeListening();
     cookAlongService.stopSpeaking();
-    cookAlongService.stopListening();
     cookAlongService.cancelAllTimers();
 
     _session = null;
@@ -318,6 +378,8 @@ class CookAlongState extends ChangeNotifier {
     _isProcessingQuestion = false;
     _isProcessingCommand = false;
     _hasStartedCooking = false;
+    _audioLevel = 0.0;
+    _mode = CookAlongMode.voice;
 
     notifyListeners();
   }
@@ -376,7 +438,8 @@ class CookAlongState extends ChangeNotifier {
     }
   }
 
-  /// Start listening for voice input
+  /// Start hands-free listening for voice input
+  /// This enables continuous listening that automatically detects speech and silence
   Future<void> startListening() async {
     if (_isListening) return;
 
@@ -393,7 +456,8 @@ class CookAlongState extends ChangeNotifier {
       _isListening = true;
       notifyListeners();
 
-      await cookAlongService.startListening(
+      // Use hands-free listening mode for a hands-free cooking experience
+      await cookAlongService.startHandsFreeListening(
         onResult: (text) {
           // If it's a question (not a command), ask it
           if (!_isVoiceCommand(text)) {
@@ -408,11 +472,11 @@ class CookAlongState extends ChangeNotifier {
     }
   }
 
-  /// Stop listening for voice input
+  /// Stop hands-free listening for voice input
   Future<void> stopListening() async {
-    if (!_isListening) return;
+    if (!_isListening && !cookAlongService.handsFreeModeActive) return;
 
-    await cookAlongService.stopListening();
+    await cookAlongService.stopHandsFreeListening();
     _isListening = false;
     notifyListeners();
   }
@@ -495,14 +559,13 @@ class CookAlongState extends ChangeNotifier {
   }
 
   /// Speak text and wait for completion
+  /// Uses the service's speakAndWait which properly tracks TTS completion
   Future<void> _speakAndWait(String text) async {
     _isSpeaking = true;
     notifyListeners();
 
-    await cookAlongService.speak(text);
-
-    // Wait a bit for TTS to actually start
-    await Future.delayed(const Duration(milliseconds: 500));
+    // Use the service method that properly waits for TTS completion
+    await cookAlongService.speakAndWait(text);
 
     _isSpeaking = false;
     notifyListeners();

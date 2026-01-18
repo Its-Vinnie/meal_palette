@@ -5,8 +5,7 @@ import 'package:meal_palette/model/detailed_recipe_model.dart';
 
 /// Service for handling conversational AI interactions using Claude API
 class ClaudeConversationService {
-  static const String _apiKey =
-      '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';
+  static const String _apiKey ='';
   static const String _apiUrl = 'https://api.anthropic.com/v1/messages';
   static const String _model = 'claude-sonnet-4-20250514';
 

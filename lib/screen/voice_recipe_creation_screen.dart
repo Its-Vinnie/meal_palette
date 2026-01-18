@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:meal_palette/model/custom_recipe_model.dart';
 import 'package:meal_palette/model/ingredient_model.dart';
@@ -8,6 +7,7 @@ import 'package:meal_palette/service/auth_service.dart';
 import 'package:meal_palette/service/cook_along_service.dart';
 import 'package:meal_palette/state/custom_recipes_state.dart';
 import 'package:meal_palette/theme/theme_design.dart';
+import 'package:meal_palette/widgets/voice_animation_controller.dart';
 import 'package:uuid/uuid.dart';
 
 /// Voice conversation message model
@@ -42,8 +42,7 @@ class VoiceRecipeCreationScreen extends StatefulWidget {
   State<VoiceRecipeCreationScreen> createState() => _VoiceRecipeCreationScreenState();
 }
 
-class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
-    with TickerProviderStateMixin {
+class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen> {
   final _authService = authService;
   final _cookAlongService = cookAlongService;
   final _recipesState = customRecipesState;
@@ -59,8 +58,10 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
 
   // Speech recognition state
   String _currentSpeechText = '';
-  Timer? _speechDebounceTimer;
-  bool _hasProcessedCurrentUtterance = false;
+  bool _handsFreeModeActive = false;
+
+  // Audio level for voice animation sync (0.0 to 1.0)
+  double _audioLevel = 0.0;
 
   // Recipe data
   String _title = '';
@@ -70,13 +71,6 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
   int? _prepTime;
   int? _cookTime;
   String? _category;
-
-  // Animation controllers
-  late AnimationController _pulseController;
-  late AnimationController _waveController;
-  late AnimationController _speakingController;
-  late Animation<double> _pulseAnimation;
-  late Animation<double> _waveAnimation;
 
   // Word to number mapping
   static const Map<String, int> _wordNumbers = {
@@ -92,34 +86,7 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
   @override
   void initState() {
     super.initState();
-    _initAnimations();
     _initialize();
-  }
-
-  void _initAnimations() {
-    // Pulse animation for idle state
-    _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
-      vsync: this,
-    )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    // Wave animation for listening state
-    _waveController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
-      vsync: this,
-    )..repeat();
-    _waveAnimation = Tween<double>(begin: 0.0, end: 2 * math.pi).animate(
-      CurvedAnimation(parent: _waveController, curve: Curves.linear),
-    );
-
-    // Speaking animation
-    _speakingController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    )..repeat(reverse: true);
   }
 
   Future<void> _initialize() async {
@@ -136,6 +103,20 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
         );
       }
     }
+
+    // Set up audio level callback for animation sync
+    _cookAlongService.onAudioLevelChange = (level) {
+      if (mounted) {
+        setState(() {
+          _audioLevel = level.clamp(0.0, 1.0);
+          // Sync listening state with service
+          if (_cookAlongService.handsFreeModeActive && _voiceState != VoiceState.speaking && _voiceState != VoiceState.processing) {
+            _voiceState = VoiceState.listening;
+            _handsFreeModeActive = true;
+          }
+        });
+      }
+    };
 
     // Initialize with welcome message
     final welcomeMessage = "Hi! I'm here to help you create a recipe using just your voice. Let's start with the recipe name. What would you like to call this recipe?";
@@ -169,7 +150,8 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
   }
 
   Future<void> _speakMessage(String message) async {
-    await _cookAlongService.speak(message, interrupt: true, useNatural: true);
+    // Use speakAndWait which properly tracks TTS completion and audio levels
+    await _cookAlongService.speakAndWait(message, interrupt: true, useNatural: true);
   }
 
   int? _parseNumber(String text) {
@@ -183,54 +165,63 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
     return null;
   }
 
-  Future<void> _startListening() async {
-    if (_voiceState == VoiceState.processing) return;
+  /// Start hands-free listening mode
+  /// The system will continuously listen and automatically process speech
+  /// when the user stops talking - no need to tap to send
+  Future<void> _startHandsFreeListening() async {
+    if (_voiceState == VoiceState.processing || _handsFreeModeActive) return;
 
     setState(() {
       _voiceState = VoiceState.listening;
       _currentSpeechText = '';
-      _hasProcessedCurrentUtterance = false;
+      _handsFreeModeActive = true;
     });
 
+    // Set up the recognized text callback for UI updates
     _cookAlongService.onRecognizedText = (text) {
-      if (text.isNotEmpty && !_hasProcessedCurrentUtterance) {
-        _speechDebounceTimer?.cancel();
+      if (text.isNotEmpty && mounted) {
         setState(() => _currentSpeechText = text);
-
-        _speechDebounceTimer = Timer(const Duration(milliseconds: 1500), () {
-          if (_currentSpeechText.isNotEmpty && !_hasProcessedCurrentUtterance && mounted) {
-            _hasProcessedCurrentUtterance = true;
-            _handleUserResponse(_currentSpeechText);
-          }
-        });
       }
     };
 
     try {
-      await _cookAlongService.startListening(timeout: const Duration(seconds: 30));
+      // Use hands-free listening which automatically:
+      // 1. Detects when user stops speaking
+      // 2. Processes the speech
+      // 3. Resumes listening after AI responds
+      await _cookAlongService.startHandsFreeListening(
+        onResult: (text) {
+          if (text.isNotEmpty && mounted) {
+            _handleUserResponse(text);
+          }
+        },
+      );
     } catch (e) {
-      print('Error starting listening: $e');
-      setState(() => _voiceState = VoiceState.idle);
+      print('Error starting hands-free listening: $e');
+      setState(() {
+        _voiceState = VoiceState.idle;
+        _handsFreeModeActive = false;
+      });
     }
   }
 
-  Future<void> _stopListening() async {
-    _speechDebounceTimer?.cancel();
-    await _cookAlongService.stopListening();
-
-    if (_currentSpeechText.isNotEmpty && !_hasProcessedCurrentUtterance && mounted) {
-      _hasProcessedCurrentUtterance = true;
-      _handleUserResponse(_currentSpeechText);
-    } else {
-      setState(() => _voiceState = VoiceState.idle);
-    }
+  /// Stop hands-free listening mode
+  Future<void> _stopHandsFreeListening() async {
+    await _cookAlongService.stopHandsFreeListening();
+    setState(() {
+      _voiceState = VoiceState.idle;
+      _handsFreeModeActive = false;
+      _currentSpeechText = '';
+    });
   }
 
   Future<void> _handleUserResponse(String response) async {
     if (_voiceState == VoiceState.processing) return;
 
-    setState(() => _voiceState = VoiceState.processing);
-    await _cookAlongService.stopListening();
+    setState(() {
+      _voiceState = VoiceState.processing;
+      _currentSpeechText = '';
+    });
     _addMessage(response, isUser: true);
 
     String aiResponse = '';
@@ -331,7 +322,14 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
     _addMessage(aiResponse, isUser: false);
     setState(() => _voiceState = VoiceState.speaking);
     await _speakMessage(aiResponse);
-    setState(() => _voiceState = VoiceState.idle);
+
+    // Resume hands-free listening after AI finishes speaking
+    if (_handsFreeModeActive && mounted) {
+      setState(() => _voiceState = VoiceState.listening);
+      // The service will automatically resume listening via TTS completion handler
+    } else {
+      setState(() => _voiceState = VoiceState.idle);
+    }
   }
 
   Future<void> _saveRecipe() async {
@@ -423,12 +421,8 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
 
   @override
   void dispose() {
-    _speechDebounceTimer?.cancel();
-    _pulseController.dispose();
-    _waveController.dispose();
-    _speakingController.dispose();
     _scrollController.dispose();
-    _cookAlongService.stopListening();
+    _cookAlongService.stopHandsFreeListening();
     _cookAlongService.stopSpeaking();
     super.dispose();
   }
@@ -536,62 +530,31 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
     );
   }
 
-  /// Animated orb visualization
+  /// Animated orb visualization using VoiceOrbWidget (same as cook along mode)
   Widget _buildAnimatedOrb() {
-    return SizedBox(
-      width: 200,
-      height: 200,
-      child: AnimatedBuilder(
-        animation: Listenable.merge([_pulseController, _waveController, _speakingController]),
-        builder: (context, child) {
-          return CustomPaint(
-            painter: _VoiceOrbPainter(
-              state: _voiceState,
-              pulseValue: _pulseAnimation.value,
-              waveValue: _waveAnimation.value,
-              speakingValue: _speakingController.value,
-            ),
-            child: Center(
-              child: _buildOrbIcon(),
-            ),
-          );
-        },
-      ),
+    return VoiceOrbWidget(
+      size: 160,
+      isAISpeaking: _voiceState == VoiceState.speaking,
+      isUserSpeaking: _voiceState == VoiceState.listening,
+      isListening: _voiceState == VoiceState.listening,
+      isProcessing: _voiceState == VoiceState.processing,
+      audioLevel: _audioLevel,
+      primaryColor: _getOrbColor(),
     );
   }
 
-  Widget _buildOrbIcon() {
-    IconData icon;
-    Color color;
-
+  /// Get the orb color based on current state
+  Color _getOrbColor() {
     switch (_voiceState) {
       case VoiceState.listening:
-        icon = Icons.mic;
-        color = Colors.white;
-        break;
-      case VoiceState.processing:
-        icon = Icons.more_horiz;
-        color = Colors.white70;
-        break;
+        return AppColors.favorite; // Red/coral for listening
       case VoiceState.speaking:
-        icon = Icons.volume_up;
-        color = Colors.white;
-        break;
+        return AppColors.success; // Green for speaking
+      case VoiceState.processing:
+        return AppColors.textSecondary; // Gray for processing
       case VoiceState.idle:
-        icon = Icons.mic_none;
-        color = Colors.white70;
-        break;
+        return AppColors.primaryAccent; // Default accent color
     }
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      child: Icon(
-        icon,
-        key: ValueKey(icon),
-        size: 48,
-        color: color,
-      ),
-    );
   }
 
   Widget _buildStatusText() {
@@ -600,7 +563,7 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
 
     switch (_voiceState) {
       case VoiceState.listening:
-        statusText = 'Listening...';
+        statusText = 'Listening... (hands-free)';
         statusColor = AppColors.primaryAccent;
         break;
       case VoiceState.processing:
@@ -612,7 +575,7 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
         statusColor = AppColors.success;
         break;
       case VoiceState.idle:
-        statusText = 'Tap to speak';
+        statusText = 'Tap to start hands-free mode';
         statusColor = AppColors.textSecondary;
         break;
     }
@@ -660,27 +623,27 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Main action button
+          // Main action button - toggle hands-free mode
           GestureDetector(
             onTap: () {
-              if (_voiceState == VoiceState.listening) {
-                _stopListening();
+              if (_handsFreeModeActive) {
+                _stopHandsFreeListening();
               } else if (_voiceState == VoiceState.idle) {
-                _startListening();
+                _startHandsFreeListening();
               }
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
-              width: _voiceState == VoiceState.listening ? 72 : 64,
-              height: _voiceState == VoiceState.listening ? 72 : 64,
+              width: _handsFreeModeActive ? 72 : 64,
+              height: _handsFreeModeActive ? 72 : 64,
               decoration: BoxDecoration(
-                color: _voiceState == VoiceState.listening
+                color: _handsFreeModeActive
                     ? AppColors.favorite
                     : AppColors.primaryAccent,
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: (_voiceState == VoiceState.listening
+                    color: (_handsFreeModeActive
                             ? AppColors.favorite
                             : AppColors.primaryAccent)
                         .withValues(alpha: 0.4),
@@ -690,7 +653,7 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
                 ],
               ),
               child: Icon(
-                _voiceState == VoiceState.listening ? Icons.stop : Icons.mic,
+                _handsFreeModeActive ? Icons.stop : Icons.mic,
                 size: 32,
                 color: Colors.white,
               ),
@@ -701,9 +664,9 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
 
           // Helper text
           Text(
-            _voiceState == VoiceState.listening
-                ? 'Tap to send'
-                : 'Tap to start speaking',
+            _handsFreeModeActive
+                ? 'Hands-free mode active - just speak!'
+                : 'Tap to start hands-free mode',
             style: AppTextStyles.labelMedium.copyWith(
               color: AppColors.textTertiary,
             ),
@@ -908,133 +871,5 @@ class _VoiceRecipeCreationScreenState extends State<VoiceRecipeCreationScreen>
         ),
       ),
     );
-  }
-}
-
-/// Custom painter for the animated voice orb
-class _VoiceOrbPainter extends CustomPainter {
-  final VoiceState state;
-  final double pulseValue;
-  final double waveValue;
-  final double speakingValue;
-
-  _VoiceOrbPainter({
-    required this.state,
-    required this.pulseValue,
-    required this.waveValue,
-    required this.speakingValue,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final baseRadius = size.width / 3;
-
-    switch (state) {
-      case VoiceState.listening:
-        _drawListeningOrb(canvas, center, baseRadius);
-        break;
-      case VoiceState.speaking:
-        _drawSpeakingOrb(canvas, center, baseRadius);
-        break;
-      case VoiceState.processing:
-        _drawProcessingOrb(canvas, center, baseRadius);
-        break;
-      case VoiceState.idle:
-        _drawIdleOrb(canvas, center, baseRadius);
-        break;
-    }
-  }
-
-  void _drawIdleOrb(Canvas canvas, Offset center, double baseRadius) {
-    // Outer glow
-    final glowPaint = Paint()
-      ..color = AppColors.primaryAccent.withValues(alpha: 0.2 * pulseValue)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30);
-    canvas.drawCircle(center, baseRadius * pulseValue * 1.3, glowPaint);
-
-    // Main orb
-    final orbPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppColors.primaryAccent,
-          AppColors.primaryAccent.withValues(alpha: 0.8),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: baseRadius));
-    canvas.drawCircle(center, baseRadius * pulseValue, orbPaint);
-  }
-
-  void _drawListeningOrb(Canvas canvas, Offset center, double baseRadius) {
-    // Animated sound waves
-    for (int i = 0; i < 3; i++) {
-      final waveRadius = baseRadius + (i * 20) + (math.sin(waveValue + i) * 10);
-      final alpha = 0.3 - (i * 0.1);
-      final wavePaint = Paint()
-        ..color = AppColors.favorite.withValues(alpha: alpha.clamp(0.0, 1.0))
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3;
-      canvas.drawCircle(center, waveRadius, wavePaint);
-    }
-
-    // Main orb
-    final orbPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppColors.favorite,
-          AppColors.favorite.withValues(alpha: 0.8),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: baseRadius));
-    canvas.drawCircle(center, baseRadius, orbPaint);
-  }
-
-  void _drawSpeakingOrb(Canvas canvas, Offset center, double baseRadius) {
-    // Pulsating glow
-    final glowSize = baseRadius + (speakingValue * 15);
-    final glowPaint = Paint()
-      ..color = AppColors.success.withValues(alpha: 0.3)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 25);
-    canvas.drawCircle(center, glowSize, glowPaint);
-
-    // Main orb with animation
-    final orbRadius = baseRadius + (math.sin(speakingValue * math.pi) * 5);
-    final orbPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppColors.success,
-          AppColors.success.withValues(alpha: 0.8),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: orbRadius));
-    canvas.drawCircle(center, orbRadius, orbPaint);
-  }
-
-  void _drawProcessingOrb(Canvas canvas, Offset center, double baseRadius) {
-    // Rotating dots
-    for (int i = 0; i < 3; i++) {
-      final angle = waveValue + (i * (2 * math.pi / 3));
-      final dotCenter = Offset(
-        center.dx + math.cos(angle) * (baseRadius * 0.7),
-        center.dy + math.sin(angle) * (baseRadius * 0.7),
-      );
-      final dotPaint = Paint()..color = AppColors.textSecondary.withValues(alpha: 0.6);
-      canvas.drawCircle(dotCenter, 6, dotPaint);
-    }
-
-    // Main orb (dimmed)
-    final orbPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          AppColors.textSecondary.withValues(alpha: 0.6),
-          AppColors.textSecondary.withValues(alpha: 0.4),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: baseRadius * 0.8));
-    canvas.drawCircle(center, baseRadius * 0.8, orbPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _VoiceOrbPainter oldDelegate) {
-    return state != oldDelegate.state ||
-        pulseValue != oldDelegate.pulseValue ||
-        waveValue != oldDelegate.waveValue ||
-        speakingValue != oldDelegate.speakingValue;
   }
 }

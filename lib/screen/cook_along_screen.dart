@@ -6,15 +6,18 @@ import 'package:meal_palette/state/cook_along_state.dart';
 import 'package:meal_palette/service/cook_along_service.dart';
 import 'package:meal_palette/theme/theme_design.dart';
 import 'package:meal_palette/widgets/cook_along_timer_widget.dart';
-import 'package:meal_palette/widgets/cook_along_voice_indicator.dart';
+import 'package:meal_palette/widgets/voice_animation_controller.dart';
 
 /// Main Cook Along Mode screen with immersive voice-guided cooking interface
+/// Supports both voice mode (AI-guided) and manual mode (button navigation)
 class CookAlongScreen extends StatefulWidget {
   final RecipeDetail recipe;
+  final CookAlongMode initialMode;
 
   const CookAlongScreen({
     super.key,
     required this.recipe,
+    this.initialMode = CookAlongMode.voice,
   });
 
   @override
@@ -44,26 +47,28 @@ class _CookAlongScreenState extends State<CookAlongScreen>
       }
     };
 
-    // Request permissions first
-    final hasPermissions = await cookAlongService.checkPermissions();
-    if (!hasPermissions && mounted) {
-      final granted = await cookAlongService.requestPermissions();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Microphone and speech recognition permissions are required for voice commands. '
-              'Please enable them in Settings.',
+    // Request permissions first (only for voice mode)
+    if (widget.initialMode == CookAlongMode.voice) {
+      final hasPermissions = await cookAlongService.checkPermissions();
+      if (!hasPermissions && mounted) {
+        final granted = await cookAlongService.requestPermissions();
+        if (!granted && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Microphone and speech recognition permissions are required for voice commands. '
+                'Please enable them in Settings.',
+              ),
+              duration: Duration(seconds: 5),
+              backgroundColor: Colors.orange,
             ),
-            duration: Duration(seconds: 5),
-            backgroundColor: Colors.orange,
-          ),
-        );
+          );
+        }
       }
     }
 
-    // Start Cook Along session
-    await cookAlongState.startSession(widget.recipe);
+    // Start Cook Along session with initial mode
+    await cookAlongState.startSession(widget.recipe, initialMode: widget.initialMode);
   }
 
   @override
@@ -98,45 +103,14 @@ class _CookAlongScreenState extends State<CookAlongScreen>
                 // Main content
                 Column(
                   children: [
-                    // Header with close and progress
+                    // Header with close, mode toggle, and progress
                     _buildHeader(session),
 
                     // Main step display
                     Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Column(
-                          children: [
-                            const SizedBox(height: 24),
-
-                            // Current step
-                            _buildCurrentStep(session),
-
-                            const SizedBox(height: 32),
-
-                            // Active timers
-                            if (cookAlongState.activeTimers.isNotEmpty) ...[
-                              _buildTimersSection(),
-                              const SizedBox(height: 32),
-                            ],
-
-                            // Voice indicator
-                            const CookAlongVoiceIndicator(),
-
-                            const SizedBox(height: 32),
-
-                            // Navigation buttons
-                            _buildNavigationButtons(session),
-
-                            const SizedBox(height: 24),
-
-                            // Quick actions
-                            _buildQuickActions(),
-
-                            const SizedBox(height: 100),
-                          ],
-                        ),
-                      ),
+                      child: cookAlongState.isVoiceMode
+                          ? _buildVoiceModeContent(session)
+                          : _buildManualModeContent(session),
                     ),
                   ],
                 ),
@@ -197,19 +171,8 @@ class _CookAlongScreenState extends State<CookAlongScreen>
                   ],
                 ),
               ),
-              IconButton(
-                icon: Icon(
-                  session.isPaused ? Icons.play_arrow : Icons.pause,
-                  color: AppColors.textPrimary,
-                ),
-                onPressed: () {
-                  if (session.isPaused) {
-                    cookAlongState.resumeSession();
-                  } else {
-                    cookAlongState.pauseSession();
-                  }
-                },
-              ),
+              // Mode toggle
+              _buildModeToggle(),
             ],
           ),
           const SizedBox(height: 12),
@@ -221,6 +184,208 @@ class _CookAlongScreenState extends State<CookAlongScreen>
             borderRadius: BorderRadius.circular(3),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildModeToggle() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildModeButton(
+            icon: Icons.touch_app,
+            isActive: cookAlongState.isManualMode,
+            onTap: () => cookAlongState.switchMode(CookAlongMode.manual),
+            tooltip: 'Manual',
+          ),
+          _buildModeButton(
+            icon: Icons.mic,
+            isActive: cookAlongState.isVoiceMode,
+            onTap: () => cookAlongState.switchMode(CookAlongMode.voice),
+            tooltip: 'Voice',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeButton({
+    required IconData icon,
+    required bool isActive,
+    required VoidCallback onTap,
+    required String tooltip,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.primaryAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Icon(
+            icon,
+            color: isActive ? Colors.white : AppColors.textSecondary,
+            size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Voice Mode Content - Immersive AI-guided experience
+  Widget _buildVoiceModeContent(CookAlongSession session) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          const SizedBox(height: 32),
+
+          // Voice Orb Animation - syncs with audio
+          Center(
+            child: VoiceOrbWidget(
+              size: 140,
+              isAISpeaking: cookAlongState.isSpeaking,
+              isListening: cookAlongState.isListening,
+              isProcessing: cookAlongState.isProcessingQuestion,
+              audioLevel: cookAlongState.audioLevel,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Status text
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Text(
+              _getStatusText(),
+              key: ValueKey(_getStatusText()),
+              style: AppTextStyles.labelLarge.copyWith(
+                color: _getStatusColor(),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 32),
+
+          // Current step card
+          _buildCurrentStep(session),
+
+          const SizedBox(height: 24),
+
+          // Active timers
+          if (cookAlongState.activeTimers.isNotEmpty) ...[
+            _buildTimersSection(),
+            const SizedBox(height: 24),
+          ],
+
+          // Navigation buttons
+          _buildNavigationButtons(session),
+
+          const SizedBox(height: 24),
+
+          // Voice command hints
+          if (cookAlongState.isListening) _buildVoiceCommandHints(),
+
+          const SizedBox(height: 24),
+
+          // Quick actions
+          _buildQuickActions(),
+
+          const SizedBox(height: 100),
+        ],
+      ),
+    );
+  }
+
+  // Manual Mode Content - Traditional button-based navigation
+  Widget _buildManualModeContent(CookAlongSession session) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          const SizedBox(height: 24),
+
+          // Current step card
+          _buildCurrentStep(session),
+
+          const SizedBox(height: 32),
+
+          // Active timers
+          if (cookAlongState.activeTimers.isNotEmpty) ...[
+            _buildTimersSection(),
+            const SizedBox(height: 32),
+          ],
+
+          // Navigation buttons
+          _buildNavigationButtons(session),
+
+          const SizedBox(height: 24),
+
+          // Quick actions (manual mode version)
+          _buildManualQuickActions(),
+
+          const SizedBox(height: 100),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusText() {
+    if (cookAlongState.isProcessingQuestion) return 'Thinking...';
+    if (cookAlongState.isSpeaking) return 'Speaking...';
+    if (cookAlongState.isListening) return 'Listening... (hands-free)';
+    return 'Tap mic to start hands-free mode';
+  }
+
+  Color _getStatusColor() {
+    if (cookAlongState.isProcessingQuestion) return AppColors.warning;
+    if (cookAlongState.isSpeaking) return AppColors.success;
+    if (cookAlongState.isListening) return AppColors.info;
+    return AppColors.textSecondary;
+  }
+
+  Widget _buildVoiceCommandHints() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: [
+        _buildCommandHint('Next'),
+        _buildCommandHint('Repeat'),
+        _buildCommandHint('Back'),
+        _buildCommandHint('Pause'),
+      ],
+    );
+  }
+
+  Widget _buildCommandHint(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.textTertiary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Text(
+        '"$text"',
+        style: AppTextStyles.labelMedium.copyWith(
+          color: AppColors.textSecondary,
+          fontStyle: FontStyle.italic,
+        ),
       ),
     );
   }
@@ -274,10 +439,11 @@ class _CookAlongScreenState extends State<CookAlongScreen>
                 ),
               ),
               if (cookAlongState.isSpeaking)
-                const Icon(
-                  Icons.volume_up,
-                  color: AppColors.primaryAccent,
-                  size: 24,
+                CompactVoiceOrb(
+                  isActive: true,
+                  isSpeaking: true,
+                  audioLevel: cookAlongState.audioLevel,
+                  size: 32,
                 ),
             ],
           ),
@@ -339,7 +505,7 @@ class _CookAlongScreenState extends State<CookAlongScreen>
         child: ElevatedButton.icon(
           onPressed: () => cookAlongState.startFirstStep(),
           icon: const Icon(Icons.play_arrow),
-          label: const Text('Start Cooking'),
+          label: Text(cookAlongState.isVoiceMode ? 'Start Cooking' : 'Start'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primaryAccent,
             foregroundColor: Colors.white,
@@ -426,13 +592,44 @@ class _CookAlongScreenState extends State<CookAlongScreen>
           () => setState(() => _showConversation = true),
         ),
         _buildActionChip(
-          cookAlongState.isListening ? 'Stop Listening' : 'Voice Command',
+          cookAlongState.isListening ? 'Stop Hands-free' : 'Start Hands-free',
           cookAlongState.isListening ? Icons.mic_off : Icons.mic,
           () {
             if (cookAlongState.isListening) {
               cookAlongState.stopListening();
             } else {
               cookAlongState.startListening();
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildManualQuickActions() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      alignment: WrapAlignment.center,
+      children: [
+        _buildActionChip(
+          'Repeat Step',
+          Icons.replay,
+          () => cookAlongState.repeatStep(),
+        ),
+        _buildActionChip(
+          'Ask Question',
+          Icons.question_answer,
+          () => setState(() => _showConversation = true),
+        ),
+        _buildActionChip(
+          cookAlongState.session?.isPaused == true ? 'Resume' : 'Pause',
+          cookAlongState.session?.isPaused == true ? Icons.play_arrow : Icons.pause,
+          () {
+            if (cookAlongState.session?.isPaused == true) {
+              cookAlongState.resumeSession();
+            } else {
+              cookAlongState.pauseSession();
             }
           },
         ),
@@ -502,6 +699,13 @@ class _CookAlongScreenState extends State<CookAlongScreen>
                       color: AppColors.textPrimary,
                     ),
                   ),
+                ),
+                // Small voice orb indicator
+                CompactVoiceOrb(
+                  isActive: cookAlongState.isSpeaking || cookAlongState.isListening,
+                  isSpeaking: cookAlongState.isSpeaking,
+                  audioLevel: cookAlongState.audioLevel,
+                  size: 36,
                 ),
               ],
             ),

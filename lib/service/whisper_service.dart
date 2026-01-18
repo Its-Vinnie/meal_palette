@@ -10,7 +10,7 @@ class WhisperService {
   static const String _apiUrl = 'https://api.openai.com/v1/audio/transcriptions';
 
   // Configurable API key - set this before using the service
-  static String _apiKey = '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';
+  static String _apiKey = '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';
 
   /// Set the OpenAI API key for Whisper
   /// Call this during app initialization with your API key

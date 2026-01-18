@@ -3,6 +3,8 @@ import 'package:meal_palette/database/firestore_service.dart';
 import 'package:meal_palette/model/detailed_recipe_model.dart';
 import 'package:meal_palette/model/recipe_model.dart';
 import 'package:meal_palette/screen/cook_along_checklist_screen.dart';
+import 'package:meal_palette/screen/cook_along_screen.dart';
+import 'package:meal_palette/state/cook_along_state.dart';
 import 'package:meal_palette/service/recipe_cache_service.dart';
 import 'package:meal_palette/state/favorites_state.dart';
 import 'package:meal_palette/theme/theme_design.dart';
@@ -36,41 +38,41 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   /// Loads recipe details from API with Firestore fallback
   Future<void> _loadRecipe() async {
-  final recipeCacheService = RecipeCacheService();
+    final recipeCacheService = RecipeCacheService();
 
-  try {
-    //* ✨ NEW: Use cache service which checks Firestore first, then API
-    final recipe = await recipeCacheService.getRecipeDetails(widget.recipeId);
+    try {
+      //* ✨ NEW: Use cache service which checks Firestore first, then API
+      final recipe = await recipeCacheService.getRecipeDetails(widget.recipeId);
 
-    if (recipe == null) {
+      if (recipe == null) {
+        setState(() {
+          _error = 'Recipe details not available';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      //* Track that user viewed this recipe
+      await _firestoreService.trackRecipeView(
+        _favoritesState.currentUserId,
+        recipe.id,
+      );
+
       setState(() {
-        _error = 'Recipe details not available';
+        _recipe = recipe;
+        _isLoading = false;
+        _isUsingCache = false; // Cache service handles this internally
+      });
+
+      print('✅ Recipe loaded: ${recipe.title}');
+    } catch (e) {
+      setState(() {
+        _error = 'Failed to load recipe details';
         _isLoading = false;
       });
-      return;
+      print('❌ Error loading recipe: $e');
     }
-
-    //* Track that user viewed this recipe
-    await _firestoreService.trackRecipeView(
-      _favoritesState.currentUserId,
-      recipe.id,
-    );
-
-    setState(() {
-      _recipe = recipe;
-      _isLoading = false;
-      _isUsingCache = false; // Cache service handles this internally
-    });
-
-    print('✅ Recipe loaded: ${recipe.title}');
-  } catch (e) {
-    setState(() {
-      _error = 'Failed to load recipe details';
-      _isLoading = false;
-    });
-    print('❌ Error loading recipe: $e');
   }
-}
 
   /// Handles favorite button press
   Future<void> _handleFavoritePressed() async {
@@ -124,6 +126,150 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => AddToCollectionModal(recipe: basicRecipe),
+    );
+  }
+
+  /// Shows mode selection dialog for Cook Along
+  Future<void> _showCookAlongModeDialog() async {
+    final mode = await showDialog<CookAlongMode>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text(
+          'Choose Cook Along Mode',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildModeOption(
+              context,
+              icon: Icons.mic,
+              title: 'Voice Mode',
+              description: 'AI-guided with voice commands',
+              mode: CookAlongMode.voice,
+              isPrimary: true,
+            ),
+            SizedBox(height: AppSpacing.md),
+            _buildModeOption(
+              context,
+              icon: Icons.touch_app,
+              title: 'Manual Mode',
+              description: 'Button navigation, no voice',
+              mode: CookAlongMode.manual,
+              isPrimary: false,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (mode != null && mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CookAlongScreen(
+            recipe: _recipe!,
+            initialMode: mode,
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildModeOption(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String description,
+    required CookAlongMode mode,
+    required bool isPrimary,
+  }) {
+    return Material(
+      color: isPrimary
+          ? AppColors.primaryAccent.withValues(alpha: 0.1)
+          : AppColors.background,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: InkWell(
+        onTap: () => Navigator.pop(context, mode),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Container(
+          padding: EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: isPrimary
+                  ? AppColors.primaryAccent
+                  : AppColors.textTertiary.withValues(alpha: 0.3),
+              width: isPrimary ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: isPrimary
+                      ? AppColors.primaryAccent
+                      : AppColors.textTertiary.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Icon(
+                  icon,
+                  color: isPrimary ? Colors.white : AppColors.textSecondary,
+                ),
+              ),
+              SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isPrimary)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryAccent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Recommended',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -533,16 +679,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                         borderRadius: BorderRadius.circular(AppRadius.lg),
                         elevation: 4,
                         child: InkWell(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => CookAlongChecklistScreen(
-                                  recipe: _recipe!,
-                                ),
-                              ),
-                            );
-                          },
+                          onTap: () => _showCookAlongModeDialog(),
                           borderRadius: BorderRadius.circular(AppRadius.lg),
                           child: Container(
                             height: 72,
@@ -556,7 +693,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                               borderRadius: BorderRadius.circular(AppRadius.lg),
                             ),
                             child: Padding(
-                              padding: EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.lg),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -564,7 +702,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                                     width: 48,
                                     height: 48,
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withValues(alpha: 0.2),
+                                      color:
+                                          Colors.white.withValues(alpha: 0.2),
                                       shape: BoxShape.circle,
                                     ),
                                     child: Icon(
@@ -576,7 +715,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                                   SizedBox(width: AppSpacing.md),
                                   Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Start Cook Along Mode',
@@ -592,7 +732,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                                         style: TextStyle(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w400,
-                                          color: Colors.white.withValues(alpha: 0.95),
+                                          color: Colors.white
+                                              .withValues(alpha: 0.95),
                                         ),
                                       ),
                                     ],

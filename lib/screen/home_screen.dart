@@ -700,120 +700,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   SizedBox(height: AppSpacing.xxl),
 
-                  //* Section Header: Trending Recipes
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Trending Recipes",
-                        style: AppTextStyles.bodyLarge.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 18,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => RecipesListScreen(
-                                title: 'Trending Recipes',
-                                type: RecipeListType.trending,
-                              ),
-                            ),
-                          );
-                        },
-                        child: Row(
-                          children: [
-                            Text(
-                              "See More",
-                              style: AppTextStyles.labelLarge.copyWith(
-                                color: AppColors.primaryAccent,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(width: 4),
-                            Icon(
-                              Icons.arrow_forward,
-                              color: AppColors.primaryAccent,
-                              size: 18,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  SizedBox(height: AppSpacing.lg),
-
-                  //* Vertical Recipe Cards for Trending
-                  _isLoadingTrending
-                      ? Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(AppSpacing.xxl),
-                            child: CircularProgressIndicator(
-                              color: AppColors.primaryAccent,
-                            ),
-                          ),
-                        )
-                      : _trendingRecipes.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(AppSpacing.xxl),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.trending_up,
-                                      size: 64,
-                                      color: AppColors.textTertiary,
-                                    ),
-                                    SizedBox(height: AppSpacing.lg),
-                                    Text(
-                                      'No trending recipes found',
-                                      style: AppTextStyles.bodyMedium,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : Column(
-                              children: _trendingRecipes.map((recipe) {
-                                return AnimatedBuilder(
-                                  animation: _favoritesState,
-                                  builder: (context, child) {
-                                    return RecipeCardVertical(
-                                      imageUrl: recipe.image ??
-                                          'assets/images/placeholder.png',
-                                      title: recipe.title,
-                                      time: '${recipe.readyInMinutes ?? 0} min',
-                                      servings:
-                                          '${recipe.servings ?? 0} servings',
-                                      difficulty: 'Medium',
-                                      isFavorite: _favoritesState.isFavorite(
-                                        recipe.id,
-                                      ),
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                RecipeDetailScreen(
-                                              recipeId: recipe.id,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      onFavoritePressed: () =>
-                                          _handleFavoritePressed(recipe),
-                                    );
-                                  },
-                                );
-                              }).toList(),
-                            ),
-
-                  SizedBox(height: AppSpacing.xxl),
-
-                  //* Section Header: Category Recipes
+                  //* Section Header: Selected Category Recipes
+                  //* Shows trending recipes when Trending is selected, otherwise shows category recipes
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -831,7 +719,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             MaterialPageRoute(
                               builder: (context) => RecipesListScreen(
                                 title: '$_selectedCategory Recipes',
-                                type: RecipeListType.category,
+                                type: _selectedCategory == 'Trending'
+                                    ? RecipeListType.trending
+                                    : RecipeListType.category,
                                 category: _selectedCategory,
                               ),
                             ),
@@ -860,76 +750,91 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   SizedBox(height: AppSpacing.lg),
 
-                  //* Vertical Recipe Cards for Selected Category
-                  _isLoadingCategory
-                      ? Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(AppSpacing.xxl),
-                            child: CircularProgressIndicator(
-                              color: AppColors.primaryAccent,
-                            ),
-                          ),
-                        )
-                      : _categoryRecipes.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(AppSpacing.xxl),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.restaurant_menu,
-                                      size: 64,
-                                      color: AppColors.textTertiary,
-                                    ),
-                                    SizedBox(height: AppSpacing.lg),
-                                    Text(
-                                      'No $_selectedCategory recipes found',
-                                      style: AppTextStyles.bodyMedium,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : Column(
-                              children: _categoryRecipes.map((recipe) {
-                                return AnimatedBuilder(
-                                  animation: _favoritesState,
-                                  builder: (context, child) {
-                                    return RecipeCardVertical(
-                                      imageUrl: recipe.image ??
-                                          'assets/images/placeholder.png',
-                                      title: recipe.title,
-                                      time: '${recipe.readyInMinutes ?? 0} min',
-                                      servings:
-                                          '${recipe.servings ?? 0} servings',
-                                      difficulty: 'Medium',
-                                      isFavorite: _favoritesState.isFavorite(
-                                        recipe.id,
-                                      ),
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                RecipeDetailScreen(
-                                              recipeId: recipe.id,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      onFavoritePressed: () =>
-                                          _handleFavoritePressed(recipe),
-                                    );
-                                  },
-                                );
-                              }).toList(),
-                            ),
+                  //* Recipe Cards for Selected Category (including Trending)
+                  _buildRecipesList(),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Builds the recipes list based on selected category
+  /// Shows trending recipes when Trending is selected, otherwise shows category recipes
+  Widget _buildRecipesList() {
+    // Determine which recipes and loading state to use
+    final bool isLoading = _selectedCategory == 'Trending'
+        ? _isLoadingTrending
+        : _isLoadingCategory;
+    final List<Recipe> recipes = _selectedCategory == 'Trending'
+        ? _trendingRecipes
+        : _categoryRecipes;
+    final IconData emptyIcon = _selectedCategory == 'Trending'
+        ? Icons.trending_up
+        : Icons.restaurant_menu;
+
+    if (isLoading) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(AppSpacing.xxl),
+          child: CircularProgressIndicator(
+            color: AppColors.primaryAccent,
+          ),
+        ),
+      );
+    }
+
+    if (recipes.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            children: [
+              Icon(
+                emptyIcon,
+                size: 64,
+                color: AppColors.textTertiary,
+              ),
+              SizedBox(height: AppSpacing.lg),
+              Text(
+                'No $_selectedCategory recipes found',
+                style: AppTextStyles.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: recipes.map((recipe) {
+        return AnimatedBuilder(
+          animation: _favoritesState,
+          builder: (context, child) {
+            return RecipeCardVertical(
+              imageUrl: recipe.image ?? 'assets/images/placeholder.png',
+              title: recipe.title,
+              time: '${recipe.readyInMinutes ?? 0} min',
+              servings: '${recipe.servings ?? 0} servings',
+              difficulty: 'Medium',
+              isFavorite: _favoritesState.isFavorite(recipe.id),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => RecipeDetailScreen(
+                      recipeId: recipe.id,
+                    ),
+                  ),
+                );
+              },
+              onFavoritePressed: () => _handleFavoritePressed(recipe),
+            );
+          },
+        );
+      }).toList(),
     );
   }
 
